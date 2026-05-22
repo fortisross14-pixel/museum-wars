@@ -1,0 +1,393 @@
+/* ============================================================
+   STYLES  ( src/ui/ )
+   Aesthetic: museum placard — warm parchment, ink, brass.
+   ============================================================ */
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Spectral:wght@400;500;600&display=swap');
+
+:root {
+  --parchment: #f4ede0;
+  --parchment-deep: #e8dcc6;
+  --ink: #2a241c;
+  --ink-soft: #5c5345;
+  --brass: #9c7a3c;
+  --brass-bright: #c89b4a;
+  --crimson: #8b3a2f;
+  --green: #4a6149;
+  --card: #fbf6ea;
+  --line: #d3c4a6;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Spectral', serif;
+  background: var(--parchment);
+  background-image:
+    radial-gradient(circle at 20% 10%, rgba(156,122,60,0.06), transparent 40%),
+    radial-gradient(circle at 80% 90%, rgba(139,58,47,0.05), transparent 40%);
+  color: var(--ink);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  padding-bottom: 60px;
+}
+h1, h2, h3 { font-family: 'Cormorant Garamond', serif; font-weight: 600; }
+
+header {
+  background: var(--ink); color: var(--parchment);
+  padding: 14px 20px; display: flex; justify-content: space-between;
+  align-items: baseline; border-bottom: 3px solid var(--brass);
+  position: sticky; top: 0; z-index: 50;
+}
+header h1 { font-size: 24px; letter-spacing: 0.5px; }
+header .tagline { font-size: 12px; color: var(--brass-bright); font-style: italic; }
+
+.stats {
+  display: flex; flex-wrap: wrap; gap: 1px;
+  background: var(--line); border-bottom: 1px solid var(--line);
+}
+.stat { flex: 1 1 80px; background: var(--parchment-deep); padding: 9px 8px; text-align: center; }
+.stat .label { font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--ink-soft); }
+.stat .value { font-family: 'Cormorant Garamond', serif; font-size: 20px; font-weight: 600; }
+
+.tabs { display: flex; max-width: 760px; margin: 0 auto; gap: 1px; background: var(--line); }
+.tab {
+  flex: 1; padding: 11px 4px; text-align: center; cursor: pointer;
+  background: var(--parchment-deep); font-size: 12px;
+  text-transform: uppercase; letter-spacing: 0.8px; color: var(--ink-soft);
+  border-bottom: 2px solid transparent;
+}
+.tab.active { background: var(--card); color: var(--ink); border-bottom-color: var(--brass); }
+.tab:hover:not(.active) { color: var(--ink); }
+
+main { max-width: 760px; margin: 0 auto; padding: 18px 16px; }
+
+.panel {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 2px; padding: 18px; margin-bottom: 16px;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.04);
+}
+.panel h2 { font-size: 22px; margin-bottom: 4px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.panel h2 .sub {
+  font-family: 'Spectral', serif; font-size: 11px; font-weight: 400;
+  text-transform: uppercase; letter-spacing: 1.5px; color: var(--brass);
+}
+.divider { height: 1px; background: var(--line); margin: 12px 0; }
+.empty-note { font-size: 13px; color: var(--ink-soft); font-style: italic; }
+
+button {
+  font-family: 'Spectral', serif; cursor: pointer;
+  border: 1px solid var(--ink); background: var(--ink); color: var(--parchment);
+  padding: 9px 16px; font-size: 14px; border-radius: 2px;
+  transition: transform 0.08s ease, background 0.15s ease;
+}
+button:hover:not(:disabled) { background: var(--brass); border-color: var(--brass); }
+button:active:not(:disabled) { transform: translateY(1px); }
+button:disabled { opacity: 0.35; cursor: not-allowed; }
+button.ghost { background: transparent; color: var(--ink); }
+button.ghost:hover:not(:disabled) { background: var(--parchment-deep); color: var(--ink); }
+button.green { background: var(--green); border-color: var(--green); }
+button.green:hover:not(:disabled) { background: #5a7558; border-color: #5a7558; }
+button.big { font-size: 16px; padding: 13px 22px; }
+button.small { font-size: 12px; padding: 6px 10px; }
+
+.thumb {
+  width: 56px; height: 56px; flex: 0 0 56px;
+  border: 1px solid var(--line); border-radius: 2px;
+  background: var(--parchment-deep);
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 28px; font-weight: 600; color: var(--brass);
+  overflow: hidden;
+}
+.thumb img { width: 100%; height: 100%; object-fit: cover; }
+.thumb.sm { width: 40px; height: 40px; flex-basis: 40px; font-size: 20px; }
+.thumb.lg { width: 100px; height: 100px; flex-basis: 100px; font-size: 48px; }
+.thumb.clickable { cursor: pointer; }
+.thumb.clickable:hover { border-color: var(--brass); }
+
+.pill {
+  display: inline-block; font-size: 10px; letter-spacing: 1px;
+  text-transform: uppercase; padding: 2px 7px; border-radius: 2px;
+  border: 1px solid currentColor;
+}
+.r-common { color: #6f6657; }
+.r-uncommon { color: #4a6149; }
+.r-rare { color: #2f6485; }
+.r-epic { color: #7d4f9c; }
+.r-legend { color: #b06d1f; }
+.r-worldicon { color: var(--crimson); }
+
+.row {
+  display: flex; gap: 12px; align-items: center;
+  padding: 11px 0; border-bottom: 1px solid var(--line);
+}
+.row:last-child { border-bottom: none; }
+.row .meta { flex: 1; min-width: 0; }
+.row .meta .name { font-family: 'Cormorant Garamond', serif; font-size: 18px; font-weight: 600; }
+.row .meta .info { font-size: 11px; color: var(--ink-soft); }
+
+.hall-label {
+  font-family: 'Cormorant Garamond', serif; font-size: 15px; font-weight: 600;
+  color: var(--brass); text-transform: uppercase; letter-spacing: 2px;
+  margin: 14px 0 6px; padding-bottom: 3px; border-bottom: 1px solid var(--line);
+}
+.hall-label:first-of-type { margin-top: 2px; }
+.hall-label .wing-of { font-size: 11px; letter-spacing: 1px; color: var(--ink-soft); font-style: italic; }
+.rooms { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+@media (max-width: 560px) { .rooms { grid-template-columns: 1fr; } }
+.room {
+  border: 1px dashed var(--line); border-radius: 2px;
+  padding: 11px; min-height: 116px; background: var(--parchment);
+  display: flex; flex-direction: column; gap: 7px;
+}
+.room.locked { align-items: center; justify-content: center; color: var(--ink-soft); font-style: italic; text-align: center; }
+.room.researching { border-style: solid; border-color: var(--brass); }
+.room.clickable { cursor: pointer; }
+.room.clickable:hover { border-color: var(--brass); background: var(--card); }
+.room-head { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+.room-name { font-family: 'Cormorant Garamond', serif; font-size: 16px; font-weight: 600; }
+.room-count { font-size: 11px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.room-empty { font-size: 11px; color: var(--ink-soft); font-style: italic; }
+.room-strip { display: flex; flex-wrap: wrap; gap: 5px; }
+.place-btn { margin-top: auto; font-size: 12px; padding: 6px 10px; }
+
+.place-banner {
+  background: var(--ink); color: var(--parchment);
+  padding: 9px 12px; border-radius: 2px; font-size: 13px; margin-bottom: 12px;
+}
+.place-banner .hi { color: var(--brass-bright); font-style: italic; }
+
+.event-card {
+  border: 1px solid var(--brass); border-radius: 2px;
+  background: var(--parchment); padding: 14px; margin-bottom: 10px;
+}
+.event-card:last-child { margin-bottom: 0; }
+.event-kind { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: var(--brass); margin-bottom: 4px; }
+.event-title { font-family: 'Cormorant Garamond', serif; font-size: 20px; margin-bottom: 4px; }
+.event-body { font-size: 13px; color: var(--ink-soft); margin-bottom: 10px; }
+.event-controls { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.auction-stage { text-align: center; }
+.auction-art { display: flex; flex-direction: column; align-items: center; gap: 7px; }
+.au-clock {
+  font-family: 'Cormorant Garamond', serif; font-size: 50px; font-weight: 600;
+  color: var(--ink); line-height: 1.1; margin: 4px 0 2px;
+  font-variant-numeric: tabular-nums; transition: color 0.15s ease;
+}
+.au-clock.urgent { color: var(--crimson); }
+.au-clock.frozen { color: var(--brass); letter-spacing: 4px; }
+.bid-readout { font-family: 'Cormorant Garamond', serif; font-size: 38px; font-weight: 600; margin: 4px 0; }
+.bid-line { font-size: 13px; color: var(--ink-soft); }
+.rival-tag { font-size: 12px; color: var(--crimson); font-style: italic; min-height: 18px; }
+.bid-controls { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 12px; }
+.lot-tracker { font-size: 12px; color: var(--ink-soft); margin-bottom: 8px; }
+
+.stars { color: var(--brass-bright); letter-spacing: 1px; }
+.log { font-size: 12px; color: var(--ink-soft); }
+.log .entry { padding: 3px 0; border-bottom: 1px dotted var(--line); }
+.log .entry:last-child { border-bottom: none; }
+.log .entry.good { color: var(--green); }
+.log .entry.bad { color: var(--crimson); }
+
+.end-banner { text-align: center; padding: 28px 16px; background: var(--ink); color: var(--parchment); border-radius: 2px; }
+.end-banner h2 { color: var(--brass-bright); font-size: 32px; }
+.end-grade { font-family: 'Cormorant Garamond', serif; font-size: 26px; margin: 8px 0; }
+
+/* artifact detail */
+.detail-head { display: flex; gap: 14px; align-items: flex-start; }
+.detail-body { flex: 1; min-width: 0; }
+.detail-title { font-family: 'Cormorant Garamond', serif; font-size: 24px; }
+.detail-meta { font-size: 12px; color: var(--ink-soft); margin: 4px 0; }
+.detail-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 13px; margin: 10px 0; }
+.detail-grid dt { color: var(--ink-soft); }
+.detail-desc { font-size: 14px; margin-top: 8px; }
+.score-badge {
+  display: inline-block; font-family: 'Cormorant Garamond', serif;
+  font-size: 15px; font-weight: 600; padding: 1px 8px;
+  border: 1px solid currentColor; border-radius: 2px;
+}
+
+.opt-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.opt {
+  border: 1px solid var(--line); border-radius: 2px;
+  padding: 7px 12px; cursor: pointer; font-size: 13px; background: var(--parchment);
+}
+.opt.active { background: var(--ink); color: var(--parchment); border-color: var(--ink); }
+.opt:hover:not(.active) { border-color: var(--brass); }
+
+.toast {
+  position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+  background: var(--crimson); color: var(--parchment);
+  padding: 10px 18px; border-radius: 2px; font-size: 13px; z-index: 99;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+}
+
+/* ============================================================
+   CITY MAP — image with round district buttons
+   ============================================================ */
+.citymap {
+  position: relative; width: 100%;
+  border: 1px solid var(--ink); border-radius: 3px; overflow: hidden;
+  background: #1f2a30;
+  aspect-ratio: 3 / 2;          /* matches the map image */
+}
+.citymap img {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+}
+.citymap .nomap {
+  position: absolute; inset: 0; display: flex;
+  align-items: center; justify-content: center; text-align: center;
+  color: #cbbd9a; font-size: 13px; font-style: italic; padding: 20px;
+}
+.dist-btn {
+  position: absolute; transform: translate(-50%, -50%);
+  width: 38px; height: 38px; border-radius: 50%;
+  border: 3px solid rgba(255,255,255,0.85);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+  cursor: pointer; padding: 0;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+.dist-btn:hover {
+  transform: translate(-50%, -50%) scale(1.18);
+  box-shadow: 0 3px 12px rgba(0,0,0,0.6);
+}
+.dist-btn.selected {
+  transform: translate(-50%, -50%) scale(1.2);
+  border-color: var(--brass-bright);
+}
+.dist-btn.empty { opacity: 0.65; }
+.dist-label {
+  position: absolute; transform: translate(-50%, 14px);
+  font-size: 10px; letter-spacing: 0.5px;
+  background: rgba(20,16,12,0.82); color: #f0e6d2;
+  padding: 1px 6px; border-radius: 2px; white-space: nowrap;
+  pointer-events: none;
+}
+
+.district {
+  border: 1px solid var(--line); border-left-width: 4px;
+  border-radius: 2px; background: var(--parchment);
+  padding: 12px 14px; margin-bottom: 10px;
+}
+.district-name {
+  font-family: 'Cormorant Garamond', serif; font-size: 19px; font-weight: 600;
+}
+.district-blurb { font-size: 12px; color: var(--ink-soft); }
+.district-buildings { margin-top: 6px; }
+.bld-row {
+  display: flex; gap: 10px; align-items: center;
+  padding: 9px 0; border-top: 1px dotted var(--line);
+}
+.bld-tag {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+  padding: 2px 6px; border-radius: 2px;
+}
+.bld-tag.here { background: var(--green); color: var(--parchment); }
+.bld-tag.owned { background: var(--brass); color: var(--parchment); }
+.bld-tag.locked { border: 1px solid var(--line); color: var(--ink-soft); }
+
+/* ============================================================
+   CUTAWAY GALLERY INTERIOR
+   ============================================================ */
+.gallery-frame {
+  background: linear-gradient(180deg, #2c2620 0%, #3a322a 100%);
+  border: 1px solid var(--ink); border-radius: 3px;
+  padding: 14px; margin-bottom: 16px;
+}
+.gallery-hall-label {
+  color: var(--brass-bright); font-family: 'Cormorant Garamond', serif;
+  font-size: 14px; letter-spacing: 2px; text-transform: uppercase;
+  text-align: center; margin: 4px 0 10px;
+}
+.gallery-rooms {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+}
+@media (max-width: 560px) { .gallery-rooms { grid-template-columns: 1fr; } }
+
+/* a single room: walls + plaque + slots */
+.groom {
+  background:
+    linear-gradient(180deg, rgba(0,0,0,0.18), rgba(0,0,0,0.32)),
+    var(--room-tint, #6b5640);
+  border: 2px solid #1d1812; border-radius: 3px;
+  padding: 10px 10px 12px; min-height: 188px;
+  display: flex; flex-direction: column; gap: 9px;
+  position: relative;
+}
+.groom.locked {
+  background: repeating-linear-gradient(
+    45deg, #2a2620, #2a2620 10px, #322c24 10px, #322c24 20px);
+  align-items: center; justify-content: center; text-align: center;
+  color: #9a8f7c; font-style: italic; gap: 10px;
+}
+.groom.selected { outline: 2px solid var(--brass-bright); outline-offset: 1px; }
+.groom.droppable { outline: 2px dashed var(--brass-bright); outline-offset: 1px; }
+
+.groom-plaque {
+  background: var(--plaque, #2f3b2c);
+  border: 1px solid rgba(255,255,255,0.18); border-radius: 3px;
+  padding: 5px 8px; text-align: center; cursor: pointer;
+}
+.groom-plaque .pname {
+  color: #f0e6d2; font-family: 'Cormorant Garamond', serif;
+  font-size: 13px; font-weight: 600; letter-spacing: 0.5px;
+}
+.groom-plaque .psub {
+  color: var(--brass-bright); font-size: 9px;
+  text-transform: uppercase; letter-spacing: 1.5px;
+}
+.groom-slots {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+  flex: 1; align-content: start;
+}
+.slot {
+  aspect-ratio: 3 / 4;
+  border: 2px dashed rgba(255,255,255,0.35);
+  border-radius: 2px;
+  background: rgba(210,200,175,0.42);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  font-size: 10px; color: rgba(255,255,255,0.5);
+}
+.slot.filled {
+  border-style: solid; border-color: rgba(0,0,0,0.4);
+  background: var(--rar, #6f6657);
+  color: #fff; cursor: pointer;
+}
+.slot.filled:hover { filter: brightness(1.12); }
+.slot .slot-icon { font-size: 17px; line-height: 1; }
+.slot .slot-initials {
+  font-family: 'Cormorant Garamond', serif; font-weight: 600;
+  font-size: 13px; margin-top: 2px;
+}
+.slot.candrop { border-color: var(--brass-bright); background: rgba(200,155,74,0.3); }
+
+.groom-foot {
+  display: flex; gap: 6px; flex-wrap: wrap; justify-content: center;
+}
+.assign-btn {
+  font-size: 11px; padding: 4px 8px;
+  background: rgba(0,0,0,0.35); border-color: rgba(255,255,255,0.25);
+  color: #f0e6d2;
+}
+.assign-btn:hover:not(:disabled) { background: var(--brass); }
+
+/* collection drawer (drag source) */
+.drawer {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 2px; padding: 14px; margin-bottom: 16px;
+}
+.drawer h3 {
+  font-size: 17px; margin-bottom: 4px;
+}
+.drawer-strip { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.drawer-chip {
+  display: flex; gap: 7px; align-items: center;
+  border: 1px solid var(--line); border-radius: 2px;
+  padding: 5px 8px; background: var(--parchment);
+  cursor: grab; font-size: 12px;
+}
+.drawer-chip:active { cursor: grabbing; }
+.drawer-chip.selected { outline: 2px solid var(--brass); }
+.drawer-chip .chip-dot {
+  width: 12px; height: 12px; border-radius: 2px; flex: 0 0 12px;
+}
+.drag-hint { font-size: 11px; color: var(--ink-soft); font-style: italic; }
