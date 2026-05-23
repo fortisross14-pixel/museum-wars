@@ -57,13 +57,13 @@ export const BUILDINGS: Record<string, BuildingDef> = {
   local: {
     id: 'local', name: 'Local Gallery',
     blurb: 'A rented room in a small city. A beginning.',
-    prestige: 1.0, moveCost: 0, maintenance: 1400,
+    prestige: 1.0, moveCost: 0, maintenance: 2100,
     halls: [{ id: 'ground', name: 'Ground Floor', roomCap: 3, startRooms: 1 }],
   },
   town: {
     id: 'town', name: 'Town Museum',
     blurb: 'A civic museum across two halls.',
-    prestige: 1.6, moveCost: 1600, maintenance: 4200,
+    prestige: 1.25, moveCost: 22000, maintenance: 8000,
     halls: [
       { id: 'east', name: 'East Hall', roomCap: 3, startRooms: 2 },
       { id: 'west', name: 'West Hall', roomCap: 3, startRooms: 1 },
@@ -72,7 +72,7 @@ export const BUILDINGS: Record<string, BuildingDef> = {
   palace: {
     id: 'palace', name: 'Historic Palace',
     blurb: 'A grand palace of three wings.',
-    prestige: 2.4, moveCost: 4200, maintenance: 11000,
+    prestige: 1.5, moveCost: 140000, maintenance: 40000,
     halls: [
       { id: 'north', name: 'North Wing', roomCap: 3, startRooms: 2 },
       { id: 'south', name: 'South Wing', roomCap: 3, startRooms: 2 },
@@ -177,6 +177,46 @@ export const RIVAL_NAMES = [
   'Adler & Voss Gallery',
   'The Marchetti Museum',
 ];
+
+/* --- expeditions ------------------------------------------- */
+/* Each kind is flavour over the same mechanics. An expedition runs
+   4 weeks, has a 50% chance of an "incident" en route, and the
+   BUDGET sets the rarity of what is found (see expeditionOdds in
+   the engine). `typeMul` nudges how many items a kind tends to
+   bring home. */
+export interface ExpeditionKindDef {
+  id: string;
+  name: string;
+  blurb: string;
+  minBudget: number;
+}
+export const EXPEDITION_KINDS: ExpeditionKindDef[] = [
+  {
+    id: 'antiques', name: 'Antiques Market',
+    blurb: 'Comb the stalls and back rooms of a great antiques market.',
+    minBudget: 5000,
+  },
+  {
+    id: 'dig', name: 'Archaeological Site',
+    blurb: 'Fund a dig at a promising, half-explored ancient site.',
+    minBudget: 12000,
+  },
+  {
+    id: 'estate', name: 'Private Estate Sale',
+    blurb: 'Negotiate access to the holdings of a fading old family.',
+    minBudget: 8000,
+  },
+  {
+    id: 'frontier', name: 'Frontier Expedition',
+    blurb: 'Mount a long expedition into remote, unmapped country.',
+    minBudget: 20000,
+  },
+];
+
+/* expedition runs this many weeks before its result */
+export const EXPEDITION_WEEKS = 4;
+/* chance of an incident en route (reduces the find) */
+export const EXPEDITION_INCIDENT_CHANCE = 0.5;
 
 /* ============================================================
    STATIC COMPETITOR MUSEUMS

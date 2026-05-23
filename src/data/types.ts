@@ -144,6 +144,41 @@ export interface RivalPlayer {
   visitors: number;
 }
 
+/* --- personnel --------------------------------------------- */
+/** the three staff roles a museum can hire for. */
+export type StaffRole = 'curator' | 'researcher' | 'explorer';
+
+/** a hireable (or hired) staff member. `skill` 1-3 sets both the
+ *  size of their effect and their weekly wage. */
+export interface StaffMember {
+  id: string;
+  name: string;
+  role: StaffRole;
+  skill: number;          // 1..3
+  wage: number;           // weekly salary
+  hired: boolean;
+}
+
+/* --- expeditions ------------------------------------------- */
+/** the kinds of expedition a museum can commission. */
+export type ExpeditionKind =
+  | 'antiques' | 'dig' | 'estate' | 'frontier';
+
+/** a commissioned expedition in progress, or one awaiting its
+ *  result. `foundIds` is decided when the expedition is launched
+ *  but only revealed/claimed when the player plays the result. */
+export interface Expedition {
+  id: string;
+  kind: ExpeditionKind;
+  style: StyleId;
+  budget: number;
+  leaderId: string | null;        // an explorer staff id, or null
+  weeksLeft: number;              // counts down; 0 = ready to resolve
+  incident: boolean;              // did something go wrong en route
+  foundIds: string[];             // the works the expedition turned up
+  resolved: boolean;              // has the player played the result
+}
+
 export interface GameState {
   playerName: string;
   galleryName: string;
@@ -169,7 +204,19 @@ export interface GameState {
   lastRevenue: number;
   lastExpenses: number;
   joinedHouses: string[];         // auction houses the player has paid to join
+  history: WeekSnapshot[];        // per-week stats, newest last
+  staff: StaffMember[];           // hired personnel
+  candidates: StaffMember[];      // recruits currently available to hire
+  expeditions: Expedition[];      // commissioned expeditions
   phase: Phase;
+}
+
+/* --- weekly history (powers the Manage chart) -------------- */
+export interface WeekSnapshot {
+  week: number;
+  dailyVisitors: number;          // average daily visitors that week
+  fame: number;
+  quality: number;
 }
 
 /* --- save slots -------------------------------------------- */

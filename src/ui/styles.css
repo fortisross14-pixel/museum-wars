@@ -1,28 +1,36 @@
 /* ============================================================
    STYLES  ( src/ui/ )
-   Aesthetic: museum placard — warm parchment, ink, brass.
+   Aesthetic: warm institutional — parchment app surface, navy
+   top bar, brass accent, clean white cards. (Visual pass.)
    ============================================================ */
-@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Spectral:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500&family=Inter:wght@400;500;600&display=swap');
 
 :root {
-  --parchment: #f4ede0;
-  --parchment-deep: #e8dcc6;
-  --ink: #2a241c;
-  --ink-soft: #5c5345;
-  --brass: #9c7a3c;
-  --brass-bright: #c89b4a;
-  --crimson: #8b3a2f;
-  --green: #4a6149;
-  --card: #fbf6ea;
-  --line: #d3c4a6;
+  /* surfaces */
+  --parchment: #f4f1ea;          /* app background */
+  --parchment-deep: #e9e4d8;     /* subtle deeper surface */
+  --card: #ffffff;               /* content cards */
+  --navy: #1c2436;               /* top bar */
+  --navy-2: #28324a;             /* navy hover/active */
+  /* ink */
+  --ink: #232a36;
+  --ink-soft: #6b7280;
+  --ink-faint: #9aa1ac;
+  /* accent */
+  --brass: #b08d4f;
+  --brass-bright: #c39d5b;
+  --brass-dk: #94733a;
+  /* lines + feedback */
+  --line: #e5e1d8;
+  --line-soft: #efece4;
+  --crimson: #b0492f;
+  --green: #4a7c4e;
+  --card-shadow: 0 1px 3px rgba(28,36,54,0.06), 0 1px 2px rgba(28,36,54,0.04);
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
-  font-family: 'Spectral', serif;
+  font-family: 'Inter', sans-serif; font-size: 14px;
   background: var(--parchment);
-  background-image:
-    radial-gradient(circle at 20% 10%, rgba(156,122,60,0.06), transparent 40%),
-    radial-gradient(circle at 80% 90%, rgba(139,58,47,0.05), transparent 40%);
   color: var(--ink);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -30,103 +38,144 @@ body {
 }
 h1, h2, h3 { font-family: 'Cormorant Garamond', serif; font-weight: 600; }
 
+/* --- top bar ------------------------------------------------ */
 header {
-  background: var(--ink); color: var(--parchment);
-  padding: 14px 20px; display: flex; justify-content: space-between;
-  align-items: baseline; border-bottom: 3px solid var(--brass);
+  background: var(--navy); color: #f4f1ea;
+  padding: 0 18px; height: 58px;
+  display: flex; justify-content: space-between; align-items: center;
   position: sticky; top: 0; z-index: 50;
 }
-header h1 { font-size: 24px; letter-spacing: 0.5px; }
-header .tagline { font-size: 12px; color: var(--brass-bright); font-style: italic; }
+header h1 {
+  font-size: 20px; font-weight: 700; letter-spacing: 0.3px;
+}
+header .tagline { font-size: 11px; color: var(--brass-bright); }
 
+/* --- stat strip --------------------------------------------- */
 .stats {
-  display: flex; flex-wrap: wrap; gap: 1px;
-  background: var(--line); border-bottom: 1px solid var(--line);
+  display: flex; gap: 8px; padding: 12px 16px 2px;
+  max-width: 920px; margin: 0 auto; overflow-x: auto;
 }
-.stat { flex: 1 1 80px; background: var(--parchment-deep); padding: 9px 8px; text-align: center; }
-.stat .label { font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--ink-soft); }
-.stat .value { font-family: 'Cormorant Garamond', serif; font-size: 20px; font-weight: 600; }
+.stat {
+  flex: 1; min-width: 92px;
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 9px; padding: 9px 12px; box-shadow: var(--card-shadow);
+  text-align: left;
+}
+.stat .label {
+  font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.7px;
+  color: var(--ink-faint); font-weight: 600;
+}
+.stat .value {
+  font-family: 'Cormorant Garamond', serif; font-size: 21px; font-weight: 600;
+  margin-top: 1px;
+}
 
-.tabs { display: flex; max-width: 760px; margin: 0 auto; gap: 1px; background: var(--line); }
-.tab {
-  flex: 1; padding: 11px 4px; text-align: center; cursor: pointer;
-  background: var(--parchment-deep); font-size: 12px;
-  text-transform: uppercase; letter-spacing: 0.8px; color: var(--ink-soft);
-  border-bottom: 2px solid transparent;
+/* --- tab bar ------------------------------------------------ */
+.tabs {
+  display: flex; gap: 3px; max-width: 920px; margin: 0 auto;
+  padding: 8px 16px 0; overflow-x: auto;
 }
-.tab.active { background: var(--card); color: var(--ink); border-bottom-color: var(--brass); }
+.tab {
+  padding: 9px 13px; cursor: pointer; white-space: nowrap;
+  font-size: 13px; font-weight: 500; color: var(--ink-soft);
+  border-radius: 8px 8px 0 0; border-bottom: 2px solid transparent;
+}
+.tab.active {
+  background: var(--card); color: var(--ink); font-weight: 600;
+  border-bottom-color: var(--brass);
+}
 .tab:hover:not(.active) { color: var(--ink); }
 
-main { max-width: 760px; margin: 0 auto; padding: 18px 16px; }
+main { max-width: 920px; margin: 0 auto; padding: 16px; }
 
+/* --- panels / cards ----------------------------------------- */
 .panel {
   background: var(--card); border: 1px solid var(--line);
-  border-radius: 2px; padding: 18px; margin-bottom: 16px;
-  box-shadow: 0 1px 0 rgba(0,0,0,0.04);
+  border-radius: 11px; padding: 16px; margin-bottom: 14px;
+  box-shadow: var(--card-shadow);
 }
-.panel h2 { font-size: 22px; margin-bottom: 4px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.panel h2 {
+  font-size: 23px; margin-bottom: 4px;
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+}
 .panel h2 .sub {
-  font-family: 'Spectral', serif; font-size: 11px; font-weight: 400;
-  text-transform: uppercase; letter-spacing: 1.5px; color: var(--brass);
+  font-family: 'Inter', sans-serif; font-size: 10.5px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 1px; color: var(--brass);
 }
 .divider { height: 1px; background: var(--line); margin: 12px 0; }
-.empty-note { font-size: 13px; color: var(--ink-soft); font-style: italic; }
+.empty-note { font-size: 13px; color: var(--ink-soft); }
 
+/* --- buttons ------------------------------------------------ */
 button {
-  font-family: 'Spectral', serif; cursor: pointer;
-  border: 1px solid var(--ink); background: var(--ink); color: var(--parchment);
-  padding: 9px 16px; font-size: 14px; border-radius: 2px;
+  font-family: 'Inter', sans-serif; font-weight: 600; cursor: pointer;
+  border: 1px solid var(--navy); background: var(--navy); color: #f4f1ea;
+  padding: 9px 16px; font-size: 13px; border-radius: 8px;
   transition: transform 0.08s ease, background 0.15s ease;
 }
-button:hover:not(:disabled) { background: var(--brass); border-color: var(--brass); }
+button:hover:not(:disabled) { background: var(--navy-2); border-color: var(--navy-2); }
 button:active:not(:disabled) { transform: translateY(1px); }
-button:disabled { opacity: 0.35; cursor: not-allowed; }
-button.ghost { background: transparent; color: var(--ink); }
-button.ghost:hover:not(:disabled) { background: var(--parchment-deep); color: var(--ink); }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+button.ghost {
+  background: transparent; color: var(--ink); border-color: var(--line);
+}
+button.ghost:hover:not(:disabled) { background: var(--parchment-deep); }
 button.green { background: var(--green); border-color: var(--green); }
-button.green:hover:not(:disabled) { background: #5a7558; border-color: #5a7558; }
-button.big { font-size: 16px; padding: 13px 22px; }
-button.small { font-size: 12px; padding: 6px 10px; }
+button.green:hover:not(:disabled) { background: #5a8f5e; border-color: #5a8f5e; }
+button.big { font-size: 15px; padding: 12px 22px; }
+button.small { font-size: 12px; padding: 6px 11px; }
+/* the primary brass action — used for Next Week etc. */
+button.primary, .next-week-btn {
+  background: var(--brass); border-color: var(--brass); color: var(--navy);
+}
+button.primary:hover:not(:disabled), .next-week-btn:hover:not(:disabled) {
+  background: var(--brass-bright); border-color: var(--brass-bright);
+}
 
+/* --- thumbnails --------------------------------------------- */
 .thumb {
   width: 56px; height: 56px; flex: 0 0 56px;
-  border: 1px solid var(--line); border-radius: 2px;
-  background: var(--parchment-deep);
+  border: 1px solid var(--line); border-radius: 7px;
+  background: linear-gradient(135deg, #d8d2c4, #c4bda9);
   display: flex; align-items: center; justify-content: center;
   font-family: 'Cormorant Garamond', serif;
-  font-size: 28px; font-weight: 600; color: var(--brass);
+  font-size: 26px; font-weight: 600; color: #fff;
   overflow: hidden;
 }
 .thumb img { width: 100%; height: 100%; object-fit: cover; }
-.thumb.sm { width: 40px; height: 40px; flex-basis: 40px; font-size: 20px; }
-.thumb.lg { width: 100px; height: 100px; flex-basis: 100px; font-size: 48px; }
+.thumb.sm { width: 40px; height: 40px; flex-basis: 40px; font-size: 19px; }
+.thumb.lg { width: 104px; height: 104px; flex-basis: 104px; font-size: 46px; }
 .thumb.clickable { cursor: pointer; }
 .thumb.clickable:hover { border-color: var(--brass); }
 
+/* --- rarity pills ------------------------------------------- */
 .pill {
-  display: inline-block; font-size: 10px; letter-spacing: 1px;
-  text-transform: uppercase; padding: 2px 7px; border-radius: 2px;
-  border: 1px solid currentColor;
+  display: inline-block; font-size: 9px; font-weight: 700; letter-spacing: 0.6px;
+  text-transform: uppercase; padding: 3px 7px; border-radius: 4px;
+  color: #fff;
 }
-.r-common { color: #6f6657; }
-.r-uncommon { color: #4a6149; }
-.r-rare { color: #2f6485; }
-.r-epic { color: #7d4f9c; }
-.r-legend { color: #b06d1f; }
-.r-worldicon { color: var(--crimson); }
+.r-common { background: #8a8676; }
+.r-uncommon { background: #4a7c4e; }
+.r-rare { background: #3b6ea5; }
+.r-epic { background: #7d4f9c; }
+.r-legend { background: #c08a2e; }
+.r-worldicon { background: var(--crimson); }
 
+/* --- list rows ---------------------------------------------- */
 .row {
   display: flex; gap: 12px; align-items: center;
-  padding: 11px 0; border-bottom: 1px solid var(--line);
+  padding: 11px 0; border-bottom: 1px solid var(--line-soft);
 }
 .row:last-child { border-bottom: none; }
 .row .meta { flex: 1; min-width: 0; }
-.row .meta .name { font-family: 'Cormorant Garamond', serif; font-size: 18px; font-weight: 600; }
-.row .meta .info { font-size: 11px; color: var(--ink-soft); }
+.row .meta .name {
+  font-family: 'Cormorant Garamond', serif; font-size: 17px; font-weight: 600;
+}
+.row .meta .info { font-size: 11.5px; color: var(--ink-soft); }
 
+/* --- gallery halls + rooms ---------------------------------- */
 .hall-label {
   font-family: 'Cormorant Garamond', serif; font-size: 15px; font-weight: 600;
-  color: var(--brass); text-transform: uppercase; letter-spacing: 2px;
+  color: var(--brass-dk); text-transform: uppercase; letter-spacing: 1.5px;
   margin: 14px 0 6px; padding-bottom: 3px; border-bottom: 1px solid var(--line);
 }
 .hall-label:first-of-type { margin-top: 2px; }
@@ -134,14 +183,18 @@ button.small { font-size: 12px; padding: 6px 10px; }
 .rooms { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 @media (max-width: 560px) { .rooms { grid-template-columns: 1fr; } }
 .room {
-  border: 1px dashed var(--line); border-radius: 2px;
-  padding: 11px; min-height: 116px; background: var(--parchment);
+  border: 1px solid var(--line); border-radius: 9px;
+  padding: 11px; min-height: 116px; background: var(--card);
+  box-shadow: var(--card-shadow);
   display: flex; flex-direction: column; gap: 7px;
 }
-.room.locked { align-items: center; justify-content: center; color: var(--ink-soft); font-style: italic; text-align: center; }
-.room.researching { border-style: solid; border-color: var(--brass); }
+.room.locked {
+  border-style: dashed; align-items: center; justify-content: center;
+  color: var(--ink-soft); font-style: italic; text-align: center;
+}
+.room.researching { border-color: var(--brass); }
 .room.clickable { cursor: pointer; }
-.room.clickable:hover { border-color: var(--brass); background: var(--card); }
+.room.clickable:hover { border-color: var(--brass); }
 .room-head { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
 .room-name { font-family: 'Cormorant Garamond', serif; font-size: 16px; font-weight: 600; }
 .room-count { font-size: 11px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
@@ -150,13 +203,13 @@ button.small { font-size: 12px; padding: 6px 10px; }
 .place-btn { margin-top: auto; font-size: 12px; padding: 6px 10px; }
 
 .place-banner {
-  background: var(--ink); color: var(--parchment);
-  padding: 9px 12px; border-radius: 2px; font-size: 13px; margin-bottom: 12px;
+  background: var(--navy); color: #f4f1ea;
+  padding: 9px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 12px;
 }
 .place-banner .hi { color: var(--brass-bright); font-style: italic; }
 
 .event-card {
-  border: 1px solid var(--brass); border-radius: 2px;
+  border: 1px solid var(--brass); border-radius: 7px;
   background: var(--parchment); padding: 14px; margin-bottom: 10px;
 }
 .event-card:last-child { margin-bottom: 0; }
@@ -187,7 +240,7 @@ button.small { font-size: 12px; padding: 6px 10px; }
 .log .entry.good { color: var(--green); }
 .log .entry.bad { color: var(--crimson); }
 
-.end-banner { text-align: center; padding: 28px 16px; background: var(--ink); color: var(--parchment); border-radius: 2px; }
+.end-banner { text-align: center; padding: 28px 16px; background: var(--ink); color: var(--parchment); border-radius: 7px; }
 .end-banner h2 { color: var(--brass-bright); font-size: 32px; }
 .end-grade { font-family: 'Cormorant Garamond', serif; font-size: 26px; margin: 8px 0; }
 
@@ -202,12 +255,12 @@ button.small { font-size: 12px; padding: 6px 10px; }
 .score-badge {
   display: inline-block; font-family: 'Cormorant Garamond', serif;
   font-size: 15px; font-weight: 600; padding: 1px 8px;
-  border: 1px solid currentColor; border-radius: 2px;
+  border: 1px solid currentColor; border-radius: 7px;
 }
 
 .opt-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
 .opt {
-  border: 1px solid var(--line); border-radius: 2px;
+  border: 1px solid var(--line); border-radius: 7px;
   padding: 7px 12px; cursor: pointer; font-size: 13px; background: var(--parchment);
 }
 .opt.active { background: var(--ink); color: var(--parchment); border-color: var(--ink); }
@@ -216,7 +269,7 @@ button.small { font-size: 12px; padding: 6px 10px; }
 .toast {
   position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
   background: var(--crimson); color: var(--parchment);
-  padding: 10px 18px; border-radius: 2px; font-size: 13px; z-index: 99;
+  padding: 10px 18px; border-radius: 7px; font-size: 13px; z-index: 99;
   box-shadow: 0 4px 14px rgba(0,0,0,0.25);
 }
 
@@ -258,13 +311,13 @@ button.small { font-size: 12px; padding: 6px 10px; }
   position: absolute; transform: translate(-50%, 14px);
   font-size: 10px; letter-spacing: 0.5px;
   background: rgba(20,16,12,0.82); color: #f0e6d2;
-  padding: 1px 6px; border-radius: 2px; white-space: nowrap;
+  padding: 1px 6px; border-radius: 7px; white-space: nowrap;
   pointer-events: none;
 }
 
 .district {
   border: 1px solid var(--line); border-left-width: 4px;
-  border-radius: 2px; background: var(--parchment);
+  border-radius: 7px; background: var(--parchment);
   padding: 12px 14px; margin-bottom: 10px;
 }
 .district-name {
@@ -278,7 +331,7 @@ button.small { font-size: 12px; padding: 6px 10px; }
 }
 .bld-tag {
   font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
-  padding: 2px 6px; border-radius: 2px;
+  padding: 2px 6px; border-radius: 7px;
 }
 .bld-tag.here { background: var(--green); color: var(--parchment); }
 .bld-tag.owned { background: var(--brass); color: var(--parchment); }
@@ -341,7 +394,7 @@ button.small { font-size: 12px; padding: 6px 10px; }
 .slot {
   aspect-ratio: 3 / 4;
   border: 2px dashed rgba(255,255,255,0.35);
-  border-radius: 2px;
+  border-radius: 7px;
   background: rgba(210,200,175,0.42);
   display: flex; flex-direction: column;
   align-items: center; justify-content: center;
@@ -373,7 +426,7 @@ button.small { font-size: 12px; padding: 6px 10px; }
 /* collection drawer (drag source) */
 .drawer {
   background: var(--card); border: 1px solid var(--line);
-  border-radius: 2px; padding: 14px; margin-bottom: 16px;
+  border-radius: 7px; padding: 14px; margin-bottom: 16px;
 }
 .drawer h3 {
   font-size: 17px; margin-bottom: 4px;
@@ -381,14 +434,14 @@ button.small { font-size: 12px; padding: 6px 10px; }
 .drawer-strip { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .drawer-chip {
   display: flex; gap: 7px; align-items: center;
-  border: 1px solid var(--line); border-radius: 2px;
+  border: 1px solid var(--line); border-radius: 7px;
   padding: 5px 8px; background: var(--parchment);
   cursor: grab; font-size: 12px;
 }
 .drawer-chip:active { cursor: grabbing; }
 .drawer-chip.selected { outline: 2px solid var(--brass); }
 .drawer-chip .chip-dot {
-  width: 12px; height: 12px; border-radius: 2px; flex: 0 0 12px;
+  width: 12px; height: 12px; border-radius: 7px; flex: 0 0 12px;
 }
 .drag-hint { font-size: 11px; color: var(--ink-soft); font-style: italic; }
 
@@ -406,7 +459,7 @@ button.small { font-size: 12px; padding: 6px 10px; }
 }
 .slot-card {
   background: var(--card); border: 1px solid var(--line);
-  border-left: 4px solid var(--brass); border-radius: 2px;
+  border-left: 4px solid var(--brass); border-radius: 7px;
   padding: 14px 16px; margin-bottom: 12px;
 }
 .slot-card.empty { border-left-color: var(--line); }
@@ -423,7 +476,7 @@ button.small { font-size: 12px; padding: 6px 10px; }
 }
 .field input {
   width: 100%; font-family: 'Spectral', serif; font-size: 15px;
-  padding: 9px 11px; border: 1px solid var(--line); border-radius: 2px;
+  padding: 9px 11px; border: 1px solid var(--line); border-radius: 7px;
   background: var(--parchment); color: var(--ink);
 }
 .field input:focus { outline: 2px solid var(--brass); }
@@ -452,7 +505,7 @@ button.small { font-size: 12px; padding: 6px 10px; }
   display: flex; gap: 10px; align-items: center;
   padding: 8px 10px; border-bottom: 1px solid var(--line);
 }
-.rank-row.you { background: rgba(156,122,60,0.14); border-radius: 2px; }
+.rank-row.you { background: rgba(156,122,60,0.14); border-radius: 7px; }
 .rank-pos {
   font-family: 'Cormorant Garamond', serif; font-size: 18px; font-weight: 600;
   width: 34px; text-align: center; color: var(--brass);
@@ -466,7 +519,7 @@ button.small { font-size: 12px; padding: 6px 10px; }
 }
 .tier-tag {
   font-size: 9px; text-transform: uppercase; letter-spacing: 1px;
-  padding: 1px 5px; border-radius: 2px; border: 1px solid var(--line);
+  padding: 1px 5px; border-radius: 7px; border: 1px solid var(--line);
   color: var(--ink-soft);
 }
 
@@ -476,7 +529,7 @@ button.small { font-size: 12px; padding: 6px 10px; }
 .filter-bar { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
 .filter-chip {
   font-size: 11px; padding: 4px 9px; border: 1px solid var(--line);
-  border-radius: 2px; background: var(--parchment); cursor: pointer;
+  border-radius: 7px; background: var(--parchment); cursor: pointer;
 }
 .filter-chip.active { background: var(--ink); color: var(--parchment); border-color: var(--ink); }
 .filter-group-label {
@@ -496,3 +549,170 @@ button.small { font-size: 12px; padding: 6px 10px; }
 .codex-name.locked { color: var(--ink-soft); letter-spacing: 2px; }
 .codex-sub { font-size: 11px; color: var(--ink-soft); }
 .codex-count { font-size: 12px; color: var(--ink-soft); margin: 6px 0; }
+
+/* ============================================================
+   PASS A — auction preview, results cards, slot remove
+   ============================================================ */
+/* lot preview list on an auction event card */
+.lot-preview {
+  margin: 8px 0; border-top: 1px dotted var(--line);
+  padding-top: 6px;
+}
+.lot-preview-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 0; font-size: 12px;
+}
+.lot-preview-name { flex: 1; font-weight: 600; }
+.lot-preview-meta { color: var(--ink-soft); font-size: 11px; }
+
+/* "New items!" results grid + item cards */
+.results-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;
+  margin: 10px 0;
+}
+@media (max-width: 560px) { .results-grid { grid-template-columns: 1fr; } }
+.item-card {
+  background: var(--card); border: 1px solid var(--line);
+  border-top: 3px solid var(--brass); border-radius: 3px;
+  padding: 10px 12px;
+}
+.item-card-head { display: flex; gap: 10px; align-items: center; }
+.item-card-name {
+  font-family: 'Cormorant Garamond', serif; font-size: 15px; font-weight: 600;
+}
+.item-card-sub { font-size: 11px; color: var(--ink-soft); }
+.item-card-desc {
+  font-size: 12px; color: var(--ink-soft); margin: 7px 0;
+  font-style: italic;
+}
+.item-card-foot {
+  display: flex; justify-content: space-between; align-items: center;
+}
+.item-card-meta { font-size: 11px; color: var(--ink-soft); }
+
+/* remove (×) button on a filled wall slot */
+.slot-remove {
+  position: absolute; top: 1px; right: 1px;
+  width: 16px; height: 16px; padding: 0; line-height: 14px;
+  font-size: 13px; border-radius: 7px;
+  background: rgba(0,0,0,0.45); color: #fff;
+  border: none; cursor: pointer; opacity: 0;
+  transition: opacity 0.1s ease;
+}
+.slot.filled { position: relative; }
+.slot.filled:hover .slot-remove { opacity: 1; }
+
+.rank-unit { font-size: 10px; color: var(--ink-soft); }
+
+/* ============================================================
+   PASS B — weekly history charts
+   ============================================================ */
+.weekchart { margin: 12px 0; }
+.weekchart-label {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 1.2px;
+  color: var(--brass); margin-bottom: 4px;
+  display: flex; justify-content: space-between; align-items: baseline;
+}
+.weekchart-latest {
+  font-family: 'Cormorant Garamond', serif; font-size: 17px;
+  font-weight: 600; letter-spacing: 0;
+}
+.weekchart-svg {
+  width: 100%; height: auto; display: block;
+  background: var(--parchment); border: 1px solid var(--line);
+  border-radius: 7px;
+}
+.weekchart-axis {
+  display: flex; justify-content: space-between;
+  font-size: 10px; color: var(--ink-soft); margin-top: 2px;
+}
+
+/* ============================================================
+   PASS D — expedition budget odds bar
+   ============================================================ */
+.odds-bar {
+  display: flex; gap: 2px; margin: 6px 0 4px;
+  height: 30px; border-radius: 7px; overflow: hidden;
+}
+.odds-seg {
+  display: flex; align-items: center; justify-content: center;
+  min-width: 0; overflow: hidden;
+  background: var(--brass); color: var(--parchment);
+}
+.odds-seg:nth-child(1) { background: #6f6657; }
+.odds-seg:nth-child(2) { background: #4a6149; }
+.odds-seg:nth-child(3) { background: #2f6485; }
+.odds-seg:nth-child(4) { background: #7d4f9c; }
+.odds-seg:nth-child(5) { background: #b06d1f; }
+.odds-label {
+  font-size: 9px; white-space: nowrap; padding: 0 3px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+
+/* ============================================================
+   PASS E — expedition result memory mini-game
+   ============================================================ */
+.memory-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+  margin: 12px 0;
+}
+@media (max-width: 480px) {
+  .memory-grid { grid-template-columns: repeat(3, 1fr); }
+}
+.memory-card {
+  aspect-ratio: 3 / 4; border-radius: 3px;
+  border: 2px solid var(--ink);
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 22px; font-weight: 600;
+  cursor: pointer; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  transition: transform 0.12s ease, background 0.12s ease;
+  /* face-down look */
+  background:
+    repeating-linear-gradient(45deg,
+      #2c2620, #2c2620 7px, #332c24 7px, #332c24 14px);
+  color: rgba(255,255,255,0.25);
+}
+.memory-card:hover:not(:disabled):not(.up) {
+  transform: translateY(-2px);
+}
+.memory-card.up {
+  background: var(--rar, #6f6657);
+  color: #fff; border-color: rgba(0,0,0,0.45);
+  cursor: default;
+}
+.memory-card.matched {
+  opacity: 0.55;
+  outline: 2px solid var(--brass-bright); outline-offset: -2px;
+}
+.memory-card:disabled { cursor: default; }
+
+/* --- private collection : acquisition cards (visual pass) --- */
+.coll-strip {
+  display: flex; gap: 10px; overflow-x: auto;
+  padding-bottom: 4px; margin-top: 10px;
+}
+.acq {
+  min-width: 132px; width: 132px;
+  border: 1px solid var(--line); border-radius: 9px;
+  background: var(--card); box-shadow: var(--card-shadow);
+  overflow: hidden; cursor: grab;
+}
+.acq:active { cursor: grabbing; }
+.acq.selected { outline: 2px solid var(--brass); }
+.acq-img {
+  height: 92px; display: flex; align-items: center; justify-content: center;
+  font-family: 'Cormorant Garamond', serif; font-size: 30px;
+  color: #fff; font-weight: 600;
+}
+.acq-body { padding: 8px 9px; }
+.acq-name {
+  font-family: 'Cormorant Garamond', serif; font-size: 13px;
+  font-weight: 600; line-height: 1.2;
+}
+.acq-sub { font-size: 10px; color: var(--ink-soft); margin-top: 1px; }
+.acq-foot {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-top: 6px;
+}
+.acq-meta { font-size: 9px; color: var(--ink-faint); }

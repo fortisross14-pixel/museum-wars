@@ -11,10 +11,12 @@
    ============================================================ */
 import type {
   GameState, StyleId, Room, GameEvent, Sponsor, LogEntry, RivalPlayer,
+  StaffMember, StaffRole, Expedition, ExpeditionKind,
 } from '../data/types';
 import {
   STYLES, STYLE_IDS, BUILDINGS, BUILDING_ORDER, ROOM_CAPACITY,
   RESEARCH_TIERS, AD_CAMPAIGN, START, RIVAL_NAMES, AUCTION_HOUSES,
+  EXPEDITION_KINDS, EXPEDITION_WEEKS, EXPEDITION_INCIDENT_CHANCE,
   rarityForScore,
 } from '../data/constants';
 import type { AuctionHouseDef } from '../data/constants';
@@ -78,6 +80,10 @@ export function newGame(): GameState {
     lastRevenue: 0,
     lastExpenses: 0,
     joinedHouses: ['house1'],   // the free starter house is joined by default
+    history: [],
+    staff: [],
+    candidates: makeCandidates(),
+    expeditions: [],
     phase: 'choose-specialty',
   };
 }
@@ -104,6 +110,9 @@ function fork(s: GameState): GameState {
     sponsors: s.sponsors.map(sp => ({ ...sp })),
     wingNames: { ...s.wingNames },
     log: [...s.log],
+    staff: s.staff.map(m => ({ ...m })),
+    candidates: s.candidates.map(m => ({ ...m })),
+    expeditions: s.expeditions.map(e => ({ ...e, foundIds: [...e.foundIds] })),
   };
 }
 
@@ -186,6 +195,8 @@ export function canResearch(s: GameState):
   if (s.research) return { ok: false, reason: 'Research already in progress.' };
   const tier = researchTier(s);
   if (!tier) return { ok: false, reason: 'All specialties unlocked.' };
+  if (!hasRole(s, 'researcher'))
+    return { ok: false, reason: 'You must employ a Researcher to research a new style.' };
   if (s.fame < tier.fameReq)
     return { ok: false, reason: `Requires ${tier.fameReq} fame.` };
   if (s.funds < tier.fee)
@@ -200,7 +211,9 @@ export function startResearch(s: GameState, style: StyleId): Result {
   if (!chk.ok) return { state: s, error: chk.reason };
   if (s.specialties.includes(style))
     return { state: s, error: 'Already a specialty.' };
-  const weeks = randInt(3, 4);
+  // a skilled researcher shortens the work by up to a week
+  const skill = roleSkill(s, 'researcher');
+  const weeks = Math.max(2, randInt(3, 4) - (skill >= 3 ? 1 : 0));
   const tier = researchTier(s)!;
   let next = fork(s);
   next.funds -= tier.fee;
@@ -437,7 +450,8 @@ export function finishLot(s: GameState): GameState {
     next.funds -= a.currentBid;
     next.owned.push(art.id);
     next.activeEvent.acquired!.push(art.id);
-    next.pendingItemId = art.id;
+    // won items go straight to the collection — they are placed
+    // later from the Galleries tab, so the auction can continue.
     const fameGain = Math.max(1, Math.round(art.score * 0.25));
     next.fame += fameGain;
     next.expertise[art.style] = Math.min(5,
@@ -482,6 +496,20 @@ export function placeArtifact(s: GameState, roomId: number): Result {
   return { state: next };
 }
 
+/** Take an artwork off its wall and back into the private
+ *  collection. The work stays owned — it just leaves display. */
+export function removeArtifact(s: GameState, artId: string): Result {
+  const room = s.rooms.find(r => r.items.includes(artId));
+  if (!room) return { state: s, error: 'That work is not on display.' };
+  const art = ARTIFACT_BY_ID[artId];
+  let next = fork(s);
+  next.rooms = next.rooms.map(r =>
+    r.id === room.id ? { ...r, items: r.items.filter(id => id !== artId) } : r);
+  next = logged(next, { kind: 'note',
+    text: `Moved ${art.name} into the private collection.` });
+  return { state: next };
+}
+
 /* --- management: tickets, sponsors, advertising ------------ */
 /** Set the ticket price (any currency amount). Changeable any time. */
 export function setTicket(s: GameState, price: number): GameState {
@@ -518,6 +546,262 @@ export function courtSponsor(
   next.wingNames = { ...next.wingNames, [hallId]: sp.name };
   next = logged(next, { kind: 'good',
     text: `${sp.name} sponsors the museum — ${money(sp.gift)} gift; a wing now bears their name.` });
+  return { state: next };
+}
+
+/* --- personnel --------------------------------------------- */
+/* Three roles:
+     curator   — lifts weekly fame and the museum's visitor draw
+     researcher— REQUIRED to research a new style; speeds research
+     explorer  — boosts expeditions (used by the expedition system)
+   A member's `skill` (1-3) scales both their effect and their wage. */
+
+const STAFF_FIRST = [
+  'Eleanor', 'Marcus', 'Priya', 'Tomas', 'Ada', 'Hugo', 'Nadia',
+  'Oscar', 'Leila', 'Viktor', 'Mei', 'Sofia', 'Idris', 'Greta',
+];
+const STAFF_LAST = [
+  'Vance', 'Okonkwo', 'Reyes', 'Halloran', 'Brandt', 'Costa',
+  'Whitfield', 'Aaltonen', 'Marchetti', 'Devereux', 'Sandoval',
+];
+const ROLE_LABEL: Record<StaffRole, string> = {
+  curator: 'Curator', researcher: 'Researcher', explorer: 'Expedition Leader',
+};
+
+function staffName(): string {
+  return `${STAFF_FIRST[randInt(0, STAFF_FIRST.length - 1)]} `
+    + STAFF_LAST[randInt(0, STAFF_LAST.length - 1)];
+}
+
+/** wage scales with skill — a star hire costs real money each week */
+function wageFor(role: StaffRole, skill: number): number {
+  const base = role === 'explorer' ? 320 : role === 'curator' ? 280 : 240;
+  return base * skill;
+}
+
+/** build a fresh pool of recruits — one or two of each role */
+export function makeCandidates(): StaffMember[] {
+  const out: StaffMember[] = [];
+  const roles: StaffRole[] = ['curator', 'researcher', 'explorer'];
+  for (const role of roles) {
+    const n = randInt(1, 2);
+    for (let i = 0; i < n; i++) {
+      const skill = randInt(1, 3);
+      out.push({
+        id: uid('staff'),
+        name: staffName(),
+        role, skill,
+        wage: wageFor(role, skill),
+        hired: false,
+      });
+    }
+  }
+  return out;
+}
+
+export const ROLE_NAME = ROLE_LABEL;
+
+/** the hired staff of a given role (may be empty) */
+export function staffOfRole(s: GameState, role: StaffRole): StaffMember[] {
+  return s.staff.filter(m => m.role === role);
+}
+/** does the museum employ at least one of this role? */
+export function hasRole(s: GameState, role: StaffRole): boolean {
+  return s.staff.some(m => m.role === role);
+}
+/** combined skill of a role (sum of skills) — 0 if none employed */
+export function roleSkill(s: GameState, role: StaffRole): number {
+  return staffOfRole(s, role).reduce((acc, m) => acc + m.skill, 0);
+}
+/** total weekly wage bill */
+export function weeklyWages(s: GameState): number {
+  return s.staff.reduce((acc, m) => acc + m.wage, 0);
+}
+
+/** Hire a recruit from the candidate pool. A one-off signing fee
+ *  of four weeks' wage is paid up front; the wage then recurs. */
+export function hireStaff(s: GameState, candidateId: string): Result {
+  const cand = s.candidates.find(c => c.id === candidateId);
+  if (!cand) return { state: s, error: 'That recruit is no longer available.' };
+  const signingFee = cand.wage * 4;
+  if (s.funds < signingFee)
+    return { state: s, error: `Hiring needs a ${money(signingFee)} signing fee.` };
+  let next = fork(s);
+  next.funds -= signingFee;
+  next.staff = [...next.staff, { ...cand, hired: true }];
+  next.candidates = next.candidates.filter(c => c.id !== candidateId);
+  next = logged(next, { kind: 'good',
+    text: `Hired ${cand.name} as ${ROLE_LABEL[cand.role]} (${money(cand.wage)}/week).` });
+  return { state: next };
+}
+
+/** Dismiss a hired staff member — their wage stops next week. */
+export function dismissStaff(s: GameState, staffId: string): Result {
+  const m = s.staff.find(x => x.id === staffId);
+  if (!m) return { state: s, error: 'No such staff member.' };
+  let next = fork(s);
+  next.staff = next.staff.filter(x => x.id !== staffId);
+  next = logged(next, { kind: 'note',
+    text: `${m.name} has left the museum's employ.` });
+  return { state: next };
+}
+
+/* --- expeditions ------------------------------------------- */
+/* An expedition is commissioned with a kind, a style (must be a
+   researched specialty), a budget, and optionally an explorer to
+   lead it. It runs EXPEDITION_WEEKS weeks, then yields a set of
+   works whose rarity is shaped by the budget. A bigger budget
+   tilts the odds toward rarer finds; a leading explorer tilts
+   them further and softens the cost of an incident. */
+
+/** the rarity-band odds (Common..Legend) for a given budget.
+ *  Returns weights summing to ~100. A small budget is almost all
+ *  Common; a vast budget can turn up Epic and even Legend. World
+ *  Icons never appear — they are reserved for another system. */
+export function expeditionOdds(budget: number, explorerSkill = 0):
+  number[] {
+  // anchor points the brief gave, interpolated by budget:
+  //   ~5k    -> [95, 5, 0, 0, 0]
+  //   ~1m    -> [40, 30, 15, 12, 3]
+  const lo = [95, 5, 0, 0, 0];
+  const hi = [40, 30, 15, 12, 3];
+  // log-scaled position between 5k and 1m
+  const t = Math.max(0, Math.min(1,
+    (Math.log10(Math.max(5000, budget)) - Math.log10(5000)) /
+    (Math.log10(1000000) - Math.log10(5000))));
+  // explorer skill nudges the position upward a little
+  const tt = Math.min(1, t + explorerSkill * 0.05);
+  const w = lo.map((l, i) => l + (hi[i] - l) * tt);
+  return w;
+}
+
+/** roll one artifact id of a given style using band odds.
+ *  Bands: 0 Common 1 Uncommon 2 Rare 3 Epic 4 Legend. */
+function rollFind(
+  style: StyleId, odds: number[], owned: Set<string>,
+): string | null {
+  const total = odds.reduce((a, b) => a + b, 0);
+  let r = Math.random() * total;
+  let band = 0;
+  for (let i = 0; i < odds.length; i++) {
+    if (r < odds[i]) { band = i; break; }
+    r -= odds[i];
+  }
+  const inBand = (sc: number) =>
+    band === 0 ? sc < 10 : band === 1 ? sc >= 10 && sc < 20
+      : band === 2 ? sc >= 20 && sc < 50 : band === 3 ? sc >= 50 && sc < 100
+      : sc >= 100 && sc < 200;
+  // prefer unowned works of the style in that band; widen if none
+  let pool = ARTIFACTS.filter(a =>
+    a.style === style && !owned.has(a.id) && inBand(a.score));
+  if (pool.length === 0)
+    pool = ARTIFACTS.filter(a =>
+      a.style === style && !owned.has(a.id) && a.score < 200);
+  if (pool.length === 0) return null;
+  return pool[randInt(0, pool.length - 1)].id;
+}
+
+/** explorers currently free to lead an expedition (not already
+ *  leading one). */
+export function freeExplorers(s: GameState): StaffMember[] {
+  const busy = new Set(
+    s.expeditions.filter(e => !e.resolved && e.leaderId)
+      .map(e => e.leaderId));
+  return s.staff.filter(m => m.role === 'explorer' && !busy.has(m.id));
+}
+
+/** Commission an expedition. The budget is spent immediately. */
+export function commissionExpedition(
+  s: GameState, kind: ExpeditionKind, style: StyleId,
+  budget: number, leaderId: string | null,
+): Result {
+  const def = EXPEDITION_KINDS.find(k => k.id === kind);
+  if (!def) return { state: s, error: 'Unknown expedition type.' };
+  if (!s.specialties.includes(style))
+    return { state: s, error: 'You can only seek a style you have researched.' };
+  if (budget < def.minBudget)
+    return { state: s, error: `A ${def.name} needs at least ${money(def.minBudget)}.` };
+  if (s.funds < budget)
+    return { state: s, error: 'You cannot afford that budget.' };
+  if (leaderId && !freeExplorers(s).some(m => m.id === leaderId))
+    return { state: s, error: 'That leader is not available.' };
+
+  const leader = leaderId ? s.staff.find(m => m.id === leaderId) : null;
+  const explorerSkill = leader ? leader.skill : 0;
+
+  // decide the outcome now; it is revealed when the player resolves it
+  const incident = Math.random() < EXPEDITION_INCIDENT_CHANCE
+    // a strong leader can avert an incident
+    && Math.random() > explorerSkill * 0.15;
+  const odds = expeditionOdds(budget, explorerSkill);
+  // how many works: budget and leader raise the count; an incident cuts it
+  let finds = 1 + Math.floor(Math.log10(Math.max(5000, budget)) - 3.4)
+    + (explorerSkill > 0 ? 1 : 0);
+  finds = Math.max(1, finds);
+  if (incident) finds = Math.max(1, finds - 1);
+
+  const owned = new Set(s.owned);
+  const foundIds: string[] = [];
+  for (let i = 0; i < finds; i++) {
+    const id = rollFind(style, odds, owned);
+    if (id) { foundIds.push(id); owned.add(id); }
+  }
+
+  let next = fork(s);
+  next.funds -= budget;
+  next.expeditions = [...next.expeditions, {
+    id: uid('exp'),
+    kind, style, budget, leaderId,
+    weeksLeft: EXPEDITION_WEEKS,
+    incident,
+    foundIds,
+    resolved: false,
+  }];
+  next = logged(next, { kind: 'good',
+    text: `Commissioned a ${def.name} seeking ${STYLES[style].name} works `
+      + `(${money(budget)}, ${EXPEDITION_WEEKS} weeks).` });
+  return { state: next };
+}
+
+/** expeditions whose timer has run out and await the result game */
+export function expeditionsReady(s: GameState): Expedition[] {
+  return s.expeditions.filter(e => !e.resolved && e.weeksLeft <= 0);
+}
+/** expeditions still in progress */
+export function expeditionsActive(s: GameState): Expedition[] {
+  return s.expeditions.filter(e => !e.resolved && e.weeksLeft > 0);
+}
+
+/** Claim the works the player matched in the result mini-game.
+ *  `claimedIds` are the ids successfully matched. */
+export function resolveExpedition(
+  s: GameState, expeditionId: string, claimedIds: string[],
+): Result {
+  const exp = s.expeditions.find(e => e.id === expeditionId);
+  if (!exp) return { state: s, error: 'No such expedition.' };
+  if (exp.resolved) return { state: s, error: 'Already resolved.' };
+  let next = fork(s);
+  // only ids that were actually part of the find can be claimed
+  const valid = claimedIds.filter(id => exp.foundIds.includes(id)
+    && !next.owned.includes(id));
+  for (const id of valid) {
+    next.owned.push(id);
+    const art = ARTIFACT_BY_ID[id];
+    const fameGain = Math.max(1, Math.round(art.score * 0.3));
+    next.fame += fameGain;
+    next.expertise[art.style] = Math.min(5,
+      +(((next.expertise[art.style] || 0) + 0.2 + art.score / 500)).toFixed(2));
+  }
+  next.expeditions = next.expeditions.map(e =>
+    e.id === expeditionId ? { ...e, resolved: true } : e);
+  const kindName = EXPEDITION_KINDS.find(k => k.id === exp.kind)?.name
+    || 'expedition';
+  next = logged(next, {
+    kind: valid.length > 0 ? 'good' : 'note',
+    text: valid.length > 0
+      ? `The ${kindName} returned with ${valid.length} work(s) for the collection.`
+      : `The ${kindName} returned, but nothing was secured.`,
+  });
   return { state: next };
 }
 
@@ -599,6 +883,8 @@ export function dailyVisitors(s: GameState): number {
   // fame and completed rooms lift the daily figure too
   total += s.fame * 0.5;
   total += s.rooms.filter(roomIsFull).length * 7;
+  // a curator makes the museum a draw in its own right
+  total += roleSkill(s, 'curator') * 14;
   return total * BUILDINGS[s.buildingId].prestige;
 }
 
@@ -632,9 +918,9 @@ export function computeRevenue(s: GameState): number {
   return Math.round(visitors * (s.ticket + 3));
 }
 
-/** weekly expenses = building maintenance (the expense line) */
+/** weekly expenses = building maintenance + staff wages */
 export function computeExpenses(s: GameState): number {
-  return BUILDINGS[s.buildingId].maintenance;
+  return BUILDINGS[s.buildingId].maintenance + weeklyWages(s);
 }
 
 /* --- rankings ---------------------------------------------- */
@@ -669,6 +955,24 @@ export function advanceWeek(s: GameState): GameState {
 
   // sponsor weekly fame
   next.fame += next.sponsors.reduce((acc, sp) => acc + sp.weeklyBonus, 0);
+  // a curator builds the museum's reputation week on week
+  next.fame += roleSkill(next, 'curator') * 2;
+
+  // expeditions count down; when one reaches zero it awaits its
+  // result mini-game on the Week tab.
+  next.expeditions = next.expeditions.map(e => {
+    if (e.resolved || e.weeksLeft <= 0) return e;
+    const left = e.weeksLeft - 1;
+    return { ...e, weeksLeft: left };
+  });
+  for (const e of next.expeditions) {
+    if (!e.resolved && e.weeksLeft === 0) {
+      const kindName = EXPEDITION_KINDS.find(k => k.id === e.kind)?.name
+        || 'expedition';
+      next = logged(next, { kind: 'note',
+        text: `Your ${kindName} has returned — check its result on the Week tab.` });
+    }
+  }
 
   // economy: revenue in, expenses out — both recorded for display
   const revenue = computeRevenue(next);
@@ -684,6 +988,11 @@ export function advanceWeek(s: GameState): GameState {
   // advertising countdown
   if (next.adWeeksLeft > 0) next.adWeeksLeft -= 1;
 
+  // refresh the recruit pool every fourth week, or if it has run dry
+  if (next.candidates.length === 0 || next.week % 4 === 0) {
+    next.candidates = makeCandidates();
+  }
+
   // the three rival players grow each week
   next.rivals = next.rivals.map(r => {
     const lead = r.fame - next.fame;
@@ -697,6 +1006,18 @@ export function advanceWeek(s: GameState): GameState {
       visitors: Math.max(0, r.visitors + randInt(-40, 120)),
     };
   });
+
+  // record a snapshot of the week that just finished, for the
+  // Manage chart. Keep the most recent 12 (the chart shows 10).
+  next.history = [
+    ...next.history,
+    {
+      week: s.week,
+      dailyVisitors: Math.round(dailyVisitors(next)),
+      fame: next.fame,
+      quality: museumQuality(next),
+    },
+  ].slice(-12);
 
   next.week += 1;
   next.events = [];
