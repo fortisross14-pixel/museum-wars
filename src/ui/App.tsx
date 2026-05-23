@@ -565,6 +565,7 @@ function GalleriesTab({
   const building = BUILDINGS[state.buildingId];
   const [selectedRoom, setSelectedRoom] = useState<number | null>(null);
   const [heldArt, setHeldArt] = useState<string | null>(null);
+  const [sellArt, setSellArt] = useState<string | null>(null);
 
   const placedSet = new Set(state.rooms.flatMap(r => r.items));
   const unplaced = state.owned.filter(id => !placedSet.has(id));
@@ -664,6 +665,10 @@ function GalleriesTab({
                         <span className={'pill ' + band.cls}>{band.name}</span>
                         <span className="acq-meta">{art.year}</span>
                       </div>
+                      <button className="ghost small acq-sell"
+                        onClick={e => { e.stopPropagation(); setSellArt(id); }}>
+                        Sell…
+                      </button>
                     </div>
                   </div>
                 );
@@ -672,7 +677,65 @@ function GalleriesTab({
           </>
         )}
       </div>
+
+      {sellArt && (
+        <SellDialog
+          artifact={ARTIFACT_BY_ID[sellArt]}
+          onQuickSell={() => {
+            apply(E.quickSellArtifact(state, sellArt));
+            setSellArt(null);
+          }}
+          onAuctionSell={() => {
+            apply(E.auctionSellArtifact(state, sellArt));
+            setSellArt(null);
+          }}
+          onCancel={() => setSellArt(null)} />
+      )}
     </>
+  );
+}
+
+/* a small dialog to sell a work — quick sale at 70%, or consign
+   to auction for a random 60-140% of value (centred near 100%). */
+function SellDialog({
+  artifact, onQuickSell, onAuctionSell, onCancel,
+}: {
+  artifact: typeof ARTIFACT_BY_ID[string];
+  onQuickSell: () => void;
+  onAuctionSell: () => void;
+  onCancel: () => void;
+}) {
+  const quick = Math.round(artifact.value * 0.7);
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <h3 style={{ fontSize: 20, marginBottom: 2 }}>Sell {artifact.name}</h3>
+        <p className="empty-note" style={{ marginBottom: 12 }}>
+          Catalogue value {money(artifact.value)}. Choose how to part with it.
+        </p>
+        <div className="sell-option">
+          <div>
+            <div className="sell-opt-title">Quick private sale</div>
+            <div className="sell-opt-note">
+              A guaranteed {money(quick)} — 70% of value, paid at once.
+            </div>
+          </div>
+          <button onClick={onQuickSell}>{money(quick)}</button>
+        </div>
+        <div className="sell-option">
+          <div>
+            <div className="sell-opt-title">Consign to auction</div>
+            <div className="sell-opt-note">
+              A gamble: the hammer falls anywhere from 60% to 140% of
+              value, most often near {money(artifact.value)}.
+            </div>
+          </div>
+          <button className="primary" onClick={onAuctionSell}>Consign</button>
+        </div>
+        <div className="divider" />
+        <button className="ghost" onClick={onCancel}>Keep it</button>
+      </div>
+    </div>
   );
 }
 
@@ -1020,7 +1083,19 @@ function EventInterior({
       </div>
     );
   }
-  if (!a) return null;
+  // fail-safe: if the event is mid-lots but the auction object is
+  // missing, rebuild it rather than rendering nothing (a blank
+  // screen). This can never normally happen, but guarantees the
+  // auction screen always shows something the player can act on.
+  if (!a) {
+    const recovered = Auc.startLot(state, ev.lotIds[ev.lotIndex || 0]);
+    queueMicrotask(() => setState({ ...state, auction: recovered }));
+    return (
+      <div className="panel auction-stage">
+        <h2>{ev.house}<span className="sub">preparing the next lot…</span></h2>
+      </div>
+    );
+  }
   const art = ARTIFACT_BY_ID[ev.lotIds[ev.lotIndex || 0]];
   const isLast = (ev.lotIndex || 0) >= ev.lotIds.length - 1;
   const myNext = a.currentBid + a.increment;
@@ -1036,6 +1111,20 @@ function EventInterior({
   };
   const onContinue = () => {
     const after = E.finishLot(state);
+    if ((after.activeEvent!.lotIndex || 0) < after.activeEvent!.lotIds.length) {
+      setState({
+        ...after,
+        auction: Auc.startLot(after,
+          after.activeEvent!.lotIds[after.activeEvent!.lotIndex!]),
+      });
+    } else {
+      setState({ ...after, auction: null });
+    }
+  };
+  // passing a lot must ALSO start the next lot's auction, or the
+  // stage would render with auction === null (a blank screen).
+  const onPass = () => {
+    const after = E.passLot(state);
     if ((after.activeEvent!.lotIndex || 0) < after.activeEvent!.lotIds.length) {
       setState({
         ...after,
@@ -1105,7 +1194,7 @@ function EventInterior({
           <div className="bid-controls">
             <button disabled={!canBid} onClick={onBid}>{bidLabel}</button>
             <button className="ghost" disabled={a.over}
-              onClick={() => setState(E.passLot(state))}>
+              onClick={onPass}>
               Pass this lot
             </button>
           </div>
@@ -1436,7 +1525,7 @@ function ExpeditionGame({
     window.setTimeout(() => {
       setFlipped([]);
       setPhase('playing');
-    }, 3000);
+    }, 4000);
   };
 
   const onCardClick = (card: GameCard) => {
@@ -1480,7 +1569,7 @@ function ExpeditionGame({
         <p className="empty-note">
           Your team brought back a single crated work — but it is hidden
           among twelve unmarked cards. Two of them are a matching pair; the
-          rest are decoys. You will see every card for three seconds, once.
+          rest are decoys. You will see every card for four seconds, once.
           Then you have three attempts to turn over the matching pair and
           claim the find.
           {expedition.incident

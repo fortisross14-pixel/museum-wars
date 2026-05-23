@@ -21,7 +21,7 @@ import {
 } from '../data/constants';
 import type { AuctionHouseDef } from '../data/constants';
 import { ARTIFACTS, ARTIFACT_BY_ID } from '../data/artifacts';
-import { randInt, rand, money, uid } from './util';
+import { randInt, rand, money, uid, gaussian } from './util';
 
 type Result = { state: GameState; error?: string };
 
@@ -507,6 +507,55 @@ export function removeArtifact(s: GameState, artId: string): Result {
     r.id === room.id ? { ...r, items: r.items.filter(id => id !== artId) } : r);
   next = logged(next, { kind: 'note',
     text: `Moved ${art.name} into the private collection.` });
+  return { state: next };
+}
+
+/** What a quick private sale pays — a flat 70% of catalogue value. */
+export function quickSellPrice(artId: string): number {
+  return Math.round(ARTIFACT_BY_ID[artId].value * 0.7);
+}
+
+/** Remove an owned work from the collection entirely — taken off
+ *  any wall and removed from `owned`. Shared by both sell paths. */
+function deaccession(s: GameState, artId: string): GameState {
+  const next = fork(s);
+  next.owned = next.owned.filter(id => id !== artId);
+  next.rooms = next.rooms.map(r =>
+    r.items.includes(artId)
+      ? { ...r, items: r.items.filter(id => id !== artId) } : r);
+  return next;
+}
+
+/** Sell a work immediately for a guaranteed 70% of its value. */
+export function quickSellArtifact(s: GameState, artId: string): Result {
+  if (!s.owned.includes(artId))
+    return { state: s, error: 'You do not own that work.' };
+  const art = ARTIFACT_BY_ID[artId];
+  const price = quickSellPrice(artId);
+  let next = deaccession(s, artId);
+  next.funds += price;
+  next = logged(next, { kind: 'good',
+    text: `Sold ${art.name} privately for ${money(price)}.` });
+  return { state: next };
+}
+
+/** Consign a work to auction — the hammer price is random, a
+ *  normal-ish spread from 60% to 140% of value, centred near 100%.
+ *  A gamble against the certain 70% of a quick sale. */
+export function auctionSellArtifact(s: GameState, artId: string): Result {
+  if (!s.owned.includes(artId))
+    return { state: s, error: 'You do not own that work.' };
+  const art = ARTIFACT_BY_ID[artId];
+  // gaussian() is ~[-1,1] centred 0 -> map to 0.6..1.4 centred 1.0
+  const factor = 1 + gaussian() * 0.4;
+  const price = Math.round(art.value * Math.max(0.6, Math.min(1.4, factor)));
+  let next = deaccession(s, artId);
+  next.funds += price;
+  const pct = Math.round((price / art.value) * 100);
+  next = logged(next, {
+    kind: pct >= 100 ? 'good' : 'note',
+    text: `${art.name} sold at auction for ${money(price)} (${pct}% of value).`,
+  });
   return { state: next };
 }
 

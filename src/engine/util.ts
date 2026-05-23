@@ -9,6 +9,16 @@ export const randInt = (min: number, max: number) =>
   Math.floor(rand(min, max + 1));
 export const pick = <T>(arr: T[]): T => arr[randInt(0, arr.length - 1)];
 
+/** a roughly-normal random value, mean 0, ~99.7% within ±1
+ *  (Box-Muller, clamped). Used for auction sale variance. */
+export const gaussian = (): number => {
+  let u = 0, v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  const g = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v) / 3;
+  return Math.max(-1, Math.min(1, g));
+};
+
 export const money = (n: number) => '§' + Math.round(n).toLocaleString();
 
 /** star string for an expertise value 0..5 */

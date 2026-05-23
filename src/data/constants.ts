@@ -57,7 +57,7 @@ export const BUILDINGS: Record<string, BuildingDef> = {
   local: {
     id: 'local', name: 'Local Gallery',
     blurb: 'A rented room in a small city. A beginning.',
-    prestige: 1.0, moveCost: 0, maintenance: 2100,
+    prestige: 1.0, moveCost: 0, maintenance: 1750,
     halls: [{ id: 'ground', name: 'Ground Floor', roomCap: 3, startRooms: 1 }],
   },
   town: {
