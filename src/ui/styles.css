@@ -777,3 +777,149 @@ button.primary:hover:not(:disabled), .next-week-btn:hover:not(:disabled) {
 }
 .sell-opt-note { font-size: 11.5px; color: var(--ink-soft); margin-top: 2px; }
 .sell-option button { flex: 0 0 auto; min-width: 96px; }
+
+/* ============================================================
+   EXPEDITION DIG BOARD
+   ============================================================ */
+.dig-status {
+  display: flex; justify-content: space-between;
+  font-size: 12.5px; color: var(--ink-soft); margin: 6px 0 10px;
+  font-weight: 600;
+}
+.dig-grid {
+  display: grid; gap: 5px; margin: 0 auto 12px;
+  max-width: 340px;
+}
+.dig-grid.size-5 { grid-template-columns: repeat(5, 1fr); }
+.dig-grid.size-6 { grid-template-columns: repeat(6, 1fr); max-width: 372px; }
+.dig-tile {
+  aspect-ratio: 1 / 1; border-radius: 4px; padding: 0;
+  border: 1px solid var(--line);
+  font-size: 16px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  background:
+    repeating-linear-gradient(45deg,
+      #3a322a, #3a322a 6px, #423930 6px, #423930 12px);
+  color: #fff;
+  transition: background 0.1s ease;
+}
+.dig-tile:hover:not(:disabled) { filter: brightness(1.2); }
+.dig-tile:disabled { cursor: default; }
+.dig-tile.open { background: var(--card); border-color: var(--line); }
+.dig-tile.empty { color: var(--ink-faint); background: var(--line-soft); }
+.dig-tile.clue   { color: #3b6ea5; background: #eef3f8; border-color: #cdddec; }
+.dig-tile.danger { color: #b0492f; background: #f8efe d; border-color: #ecd2c8; }
+.dig-tile.danger { background: #f8efed; }
+.dig-tile.find   { color: #94733a; background: #faf4e6; border-color: #e9dcc0;
+  font-weight: 700; }
+.dig-tile.bomb   { color: #fff; background: #b0492f; border-color: #8a3826; }
+.dig-legend {
+  display: flex; flex-wrap: wrap; gap: 4px 12px;
+  font-size: 11px; color: var(--ink-soft); justify-content: center;
+}
+
+/* ============================================================
+   GALA — conversation mini-game
+   ============================================================ */
+.convo-target {
+  font-size: 13px; color: var(--ink); margin: 8px 0;
+  padding: 8px 10px; background: var(--line-soft); border-radius: 6px;
+}
+.convo-reaction {
+  font-size: 13px; color: var(--ink-soft); font-style: italic;
+  min-height: 22px; margin: 4px 0;
+}
+.convo-options { display: flex; flex-direction: column; gap: 8px; }
+.convo-line {
+  text-align: left; padding: 10px 12px; cursor: pointer;
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 8px; display: flex; flex-direction: column; gap: 3px;
+  width: 100%;
+}
+.convo-line:hover { border-color: var(--brass); background: #faf7f0; }
+.convo-tag {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.4px;
+  text-transform: uppercase; color: var(--brass-dk);
+}
+.convo-text {
+  font-family: 'Cormorant Garamond', serif; font-size: 14px;
+  color: var(--ink); font-style: italic;
+}
+.gala-target {
+  padding: 0; border: none; background: none; cursor: pointer;
+  display: flex; flex-direction: column; gap: 4px; text-align: left;
+}
+.gala-pick {
+  font-size: 11px; font-weight: 600; color: var(--brass-dk);
+  text-align: center;
+}
+.gala-target:hover .item-card { border-color: var(--brass); }
+
+/* ============================================================
+   BLACK MARKET — authentication exam
+   ============================================================ */
+.exam-list { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+.exam-point {
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 10px 12px; background: var(--card);
+}
+.exam-label {
+  font-family: 'Cormorant Garamond', serif; font-size: 15px;
+  font-weight: 600; margin-bottom: 6px;
+}
+.exam-buttons { display: flex; gap: 8px; }
+.exam-btn {
+  flex: 1; padding: 7px 0; font-size: 12px;
+  background: var(--line-soft); color: var(--ink-soft);
+  border: 1px solid var(--line); border-radius: 6px; cursor: pointer;
+}
+.exam-btn:hover { border-color: var(--brass); }
+.exam-btn.picked {
+  background: var(--brass); color: #fff; border-color: var(--brass-dk);
+  font-weight: 600;
+}
+
+/* --- unanalyzed black-market pieces ------------------------ */
+.acq.unanalyzed {
+  border: 2px solid #1a1a1a;
+  box-shadow: 0 0 0 1px #1a1a1a inset;
+}
+.acq-unverified {
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.3px;
+  text-transform: uppercase; color: #1a1a1a;
+  background: #e8e4da; border-radius: 3px;
+  padding: 3px 5px; margin-top: 6px; text-align: center;
+}
+
+/* --- museum switcher (Galleries header) -------------------- */
+.museum-switch {
+  display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px;
+}
+
+/* --- wing navigation (Galleries) --------------------------- */
+.wing-switch {
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.wing-chip {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 12px; border-radius: 8px; cursor: pointer;
+  font-family: 'Cormorant Garamond', serif; font-size: 14px; font-weight: 600;
+  background: var(--card); border: 1px solid var(--line); color: var(--ink-soft);
+}
+.wing-chip:hover { border-color: var(--brass); }
+.wing-chip.active {
+  background: var(--ink); color: #fff; border-color: var(--ink);
+}
+.wing-chip-sub {
+  font-size: 10.5px; font-family: 'Inter', sans-serif; font-weight: 600;
+  opacity: 0.7;
+}
+.gallery-hall-label {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.wing-rename-btn { padding: 3px 9px; font-size: 10.5px; }
+.wing-cohesion {
+  font-size: 11.5px; color: var(--brass-dk); font-weight: 600;
+  padding: 5px 10px; background: #faf3e2; border-radius: 5px;
+  margin: 0 10px 8px;
+}

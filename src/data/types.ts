@@ -126,10 +126,17 @@ export interface AuctionState {
   message: string;
 }
 
+/** an active sponsorship of a museum's building or one of its
+ *  wings. Runs for a fixed term, paying weekly; when the term
+ *  ends the sponsor departs and the named space reverts. */
 export interface Sponsor {
-  id: string; name: string;
-  gift: number; weeklyBonus: number;
-  wingNamed: string | null;
+  id: string;
+  name: string;            // the sponsor — names the building or wing
+  scope: 'building' | 'wing';
+  hallId: string | null;   // which wing (when scope === 'wing')
+  termWeeks: number;       // 26 or 52
+  weeksLeft: number;       // counts down
+  weeklyPay: number;       // paid into funds each week
 }
 
 export type TicketPrice = number;   // an actual currency amount now
@@ -145,54 +152,96 @@ export interface RivalPlayer {
   fame: number;
   quality: number;
   visitors: number;
+  heirloomId?: string;     // the grandparent's work this cousin inherited
 }
 
 /* --- personnel --------------------------------------------- */
 /** the three staff roles a museum can hire for. */
 export type StaffRole = 'curator' | 'researcher' | 'explorer';
 
-/** a hireable (or hired) staff member. `skill` 1-3 sets both the
- *  size of their effect and their weekly wage. */
+/** each role has three specialties — distinct effects, so hiring
+ *  is a real choice rather than just "pick the highest skill".
+ *  researcher: basic (enables only) / thrifty (cheaper) / swift (faster)
+ *  explorer:   surveyor (+digs) / quartermaster (cheaper) / veteran (+tolerance)
+ *  curator:    publicist (+fame) / steward (-upkeep) / authenticator (free analysis) */
+export type StaffSpecialty =
+  | 'basic' | 'thrifty' | 'swift'
+  | 'surveyor' | 'quartermaster' | 'veteran'
+  | 'publicist' | 'steward' | 'authenticator';
+
+/** a hireable (or hired) staff member. `skill` 1-3 sets the wage
+ *  and scales the effect; `specialty` sets which effect. */
 export interface StaffMember {
   id: string;
   name: string;
   role: StaffRole;
+  specialty: StaffSpecialty;
   skill: number;          // 1..3
   wage: number;           // weekly salary
   hired: boolean;
 }
 
 /* --- expeditions ------------------------------------------- */
-/** the kinds of expedition a museum can commission. */
-export type ExpeditionKind =
-  | 'antiques' | 'dig' | 'estate' | 'frontier';
+/** the four expedition tiers — each costs more and runs a harder
+ *  board. Common/Uncommon yield whole objects; Rare/Epic yield
+ *  shards that are banked toward a summon. */
+export type ExpeditionTier = 'common' | 'uncommon' | 'rare' | 'epic';
 
-/** a commissioned expedition in progress, or one awaiting its
- *  result. `foundIds` is decided when the expedition is launched
- *  but only revealed/claimed when the player plays the result. */
+/** a commissioned expedition: counts down, then the player plays
+ *  the board mini-game to resolve it. */
 export interface Expedition {
   id: string;
-  kind: ExpeditionKind;
+  tier: ExpeditionTier;
   style: StyleId;
-  budget: number;
   leaderId: string | null;        // an explorer staff id, or null
   weeksLeft: number;              // counts down; 0 = ready to resolve
-  incident: boolean;              // did something go wrong en route
-  foundIds: string[];             // the works the expedition turned up
-  resolved: boolean;              // has the player played the result
+  resolved: boolean;              // has the player played the board
+}
+
+/** a per-style, per-rarity shard balance. Key is `${tier}:${style}`,
+ *  e.g. "rare:egyptian". Value is the count held. */
+export type ShardBank = Record<string, number>;
+
+/* --- loans (from galas) ------------------------------------ */
+/** a work loaned to the museum by a collector — it hangs on a
+ *  wall for a time, costs a weekly fee, then leaves. */
+export interface Loan {
+  id: string;
+  artifactId: string;
+  roomId: number;          // the wall it hangs on
+  weeksLeft: number;       // counts down; 0 = the loan ends
+  weeklyFee: number;       // paid each week the loan runs
+  lenderName: string;      // the collector it came from
+}
+
+/* --- a museum --------------------------------------------- */
+/** one of the player's museums. Each has its own name, building,
+ *  rooms, fame, ticket price, sponsors and loans, and ranks
+ *  individually. The collection, funds and staff are shared. */
+export interface Museum {
+  id: string;
+  name: string;
+  buildingId: string;
+  rooms: Room[];
+  fame: number;
+  ticket: TicketPrice;
+  sponsors: Sponsor[];
+  wingNames: Record<string, string>;
+  adWeeksLeft: number;
+  loans: Loan[];                  // works on loan, hanging here
+  open: boolean;                  // false once the museum is closed
 }
 
 export interface GameState {
   playerName: string;
-  galleryName: string;
+  galleryName: string;            // the player's overall collection name
   funds: number;
-  fame: number;
   week: number;
   specialties: StyleId[];
   research: { style: StyleId; weeksLeft: number } | null;
   expertise: Partial<Record<StyleId, number>>;
-  buildingId: string;
-  rooms: Room[];
+  museums: Museum[];              // the player's museums (>=1 while playing)
+  activeMuseumId: string;         // the museum currently being viewed
   owned: string[];
   rivals: RivalPlayer[];          // the 3 rival players
   log: LogEntry[];
@@ -200,10 +249,6 @@ export interface GameState {
   activeEvent: GameEvent | null;
   auction: AuctionState | null;
   pendingItemId: string | null;
-  ticket: TicketPrice;
-  sponsors: Sponsor[];
-  wingNames: Record<string, string>;
-  adWeeksLeft: number;
   lastRevenue: number;
   lastExpenses: number;
   joinedHouses: string[];         // auction houses the player has paid to join
@@ -211,6 +256,14 @@ export interface GameState {
   staff: StaffMember[];           // hired personnel
   candidates: StaffMember[];      // recruits currently available to hire
   expeditions: Expedition[];      // commissioned expeditions
+  shards: ShardBank;              // banked expedition shards by tier:style
+  galaPending: boolean;           // a gala is on offer this week
+  blackMarketPending: boolean;    // a black-market offer is available
+  // black-market pieces: which owned ids are still unanalyzed
+  // (with the price paid, for the forgery fine), and — hidden from
+  // the player until analyzed — which of those are forgeries.
+  unanalyzed: { artifactId: string; pricePaid: number }[];
+  forgeries: string[];
   phase: Phase;
 }
 

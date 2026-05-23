@@ -15,17 +15,20 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import './styles.css';
 import type {
-  GameState, StyleId, Room, SaveSlot, GameEvent,
+  GameState, StyleId, Room, SaveSlot, GameEvent, Expedition,
 } from '../data/types';
 import {
   STYLES, STYLE_IDS, ART_TYPES, BUILDINGS, AD_CAMPAIGN, START,
-  AUCTION_HOUSES, EXPEDITION_KINDS, EXPEDITION_WEEKS,
+  AUCTION_HOUSES, EXPEDITION_TIERS, SUMMON_COST,
   DISTRICTS, districtOfBuilding, typeIcon, rarityForScore,
   RARITY_BANDS, STATIC_MUSEUMS,
 } from '../data/constants';
 import { ARTIFACTS, ARTIFACT_BY_ID } from '../data/artifacts';
 import * as E from '../engine/game';
 import * as Auc from '../engine/auction';
+import * as Dig from '../engine/digboard';
+import * as Gala from '../engine/gala';
+import * as BM from '../engine/blackmarket';
 import * as Saves from '../engine/saves';
 import { money, stars } from '../engine/util';
 import { Thumb, RarityPill, ArtifactDetail } from './components';
@@ -132,6 +135,10 @@ function Game({
   const [confirmSkip, setConfirmSkip] = useState(false);
   // the id of an expedition whose result mini-game is open
   const [expeditionGame, setExpeditionGame] = useState<string | null>(null);
+  // whether the gala screen is open
+  const [galaOpen, setGalaOpen] = useState(false);
+  // whether the black-market screen is open
+  const [blackMarketOpen, setBlackMarketOpen] = useState(false);
 
   const flash = useCallback((msg: string) => {
     setToast(msg);
@@ -175,7 +182,8 @@ function Game({
   /* --- onboarding screens ---------------------------------- */
   if (state.phase === 'choose-specialty') {
     return <ChooseStyle
-      onPick={artId => setState(E.chooseFoundingArtwork(state, artId))}
+      onPick={(artId, all) =>
+        setState(E.chooseFoundingArtwork(state, artId, all))}
       onExit={onExit} />;
   }
   if (state.phase === 'name-gallery') {
@@ -206,12 +214,34 @@ function Game({
   } else if (expeditionGame) {
     const exp = state.expeditions.find(e => e.id === expeditionGame);
     body = exp ? (
-      <ExpeditionGame expedition={exp}
-        onFinish={claimedIds => {
-          apply(E.resolveExpedition(state, exp.id, claimedIds));
+      <ExpeditionGame state={state} expedition={exp}
+        onFinish={result => {
+          apply(E.resolveExpedition(state, exp.id, result));
           setExpeditionGame(null);
         }} />
     ) : null;
+  } else if (blackMarketOpen) {
+    body = (
+      <BlackMarketScreen state={state}
+        onBuy={(artId, price, isReal, truthKnown) => {
+          apply(E.buyBlackMarket(state, artId, price, isReal, truthKnown));
+        }}
+        onClose={() => {
+          setRawState(s => ({ ...s, blackMarketPending: false }));
+          setBlackMarketOpen(false);
+        }} />
+    );
+  } else if (galaOpen) {
+    body = (
+      <GalaScreen state={state}
+        onAccept={(artId, weeks, fee, lender) => {
+          apply(E.acceptLoan(state, artId, weeks, fee, lender));
+        }}
+        onClose={() => {
+          setRawState(s => ({ ...s, galaPending: false }));
+          setGalaOpen(false);
+        }} />
+    );
   } else if (confirmSkip) {
     body = (
       <div className="panel">
@@ -232,13 +262,16 @@ function Game({
     );
   } else if (tab === 'galleries') {
     body = <GalleriesTab state={state} apply={apply} flash={flash}
-      onArtifact={setOpenArtifactId} />;
+      setState={setState} onArtifact={setOpenArtifactId} />;
   } else if (tab === 'map') {
-    body = <MapTab state={state} apply={apply} />;
+    body = <MapTab state={state} apply={apply} setState={setState}
+      flash={flash} goGalleries={() => setTab('galleries')} />;
   } else if (tab === 'week') {
     body = <WeekTab state={state} setState={setState} flash={flash}
       goGalleries={() => setTab('galleries')} onNextWeek={doNextWeek}
-      onExpeditionResult={expId => setExpeditionGame(expId)} />;
+      onExpeditionResult={expId => setExpeditionGame(expId)}
+      onGala={() => setGalaOpen(true)}
+      onBlackMarket={() => setBlackMarketOpen(true)} />;
   } else if (tab === 'specialties') {
     body = <SpecialtiesTab state={state} apply={apply} />;
   } else if (tab === 'manage') {
@@ -291,7 +324,7 @@ function Shell({
       <div className="stats">
         <Stat label="Week" value={String(state.week)} />
         <Stat label="Funds" value={money(state.funds)} />
-        <Stat label="Fame" value={String(state.fame)} />
+        <Stat label="Fame" value={String(E.totalFame(state))} />
         <Stat label="Quality" value={String(E.museumQuality(state))} />
         <Stat label="Revenue" value={money(state.lastRevenue)} />
         <Stat label="Upkeep" value={money(state.lastExpenses)} />
@@ -323,7 +356,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 function ChooseStyle({
   onPick, onExit,
 }: {
-  onPick: (artId: string) => void;
+  onPick: (artId: string, allChoices: string[]) => void;
   onExit: () => void;
 }) {
   const [offered] = useState<string[]>(() => E.foundingArtworkChoices());
@@ -332,18 +365,23 @@ function ChooseStyle({
       <header>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
           <h1 style={{ cursor: 'pointer' }} onClick={onExit}>Museum Wars</h1>
-          <span className="tagline">found your museum</span>
+          <span className="tagline">a family inheritance</span>
         </div>
       </header>
       <main>
         <div className="panel">
-          <h2>Opening Acquisition
-            <span className="sub">choose your founding work</span></h2>
+          <h2>The Inheritance
+            <span className="sub">your grandparent's legacy</span></h2>
           <p className="empty-note">
-            Every museum begins with a single acquisition. Choose one of these
-            works to lead your collection — your museum will specialise in its
-            style, and that piece will hang from your opening day. Further
-            styles can be researched later as your fame grows.
+            Your grandparent was a lifelong collector of art. Their will leaves
+            three treasured works to be divided among the grandchildren — and
+            the eldest chooses first. You.
+          </p>
+          <p className="empty-note">
+            Choose the piece that will found your museum; your collection will
+            specialise in its style, and it will hang from your opening day.
+            The two works you leave behind pass to your cousins — who will open
+            museums of their own, and become your rivals.
           </p>
           <div className="divider" />
           {offered.map(id => {
@@ -364,7 +402,7 @@ function ChooseStyle({
                     {' '}· founds a {STYLES[art.style].name} museum
                   </div>
                 </div>
-                <button onClick={() => onPick(id)}>Found</button>
+                <button onClick={() => onPick(id, offered)}>Inherit</button>
               </div>
             );
           })}
@@ -444,27 +482,150 @@ function NameGallery({
 }
 
 /* ============================================================
-   MAP TAB
+   MAP TAB — your museums + the city's buildings
    ============================================================ */
 function MapTab({
-  state, apply,
+  state, apply, setState, flash, goGalleries,
 }: {
   state: GameState;
   apply: (r: { state: GameState; error?: string }) => void;
+  setState: (s: GameState) => void;
+  flash: (m: string) => void;
+  goGalleries: () => void;
 }) {
   const [selected, setSelected] = useState<string>(
-    districtOfBuilding(state.buildingId)?.id || 'historic');
+    districtOfBuilding(E.activeMuseum(state).buildingId)?.id || 'historic');
   const [mapFailed, setMapFailed] = useState(false);
-  const ownedIndex = E.BUILDING_ORDER_PUBLIC.indexOf(state.buildingId);
+  // a building the player is about to open a new museum in
+  const [openingBuilding, setOpeningBuilding] = useState<string | null>(null);
+  const [newName, setNewName] = useState('');
+  const [confirmClose, setConfirmClose] = useState<string | null>(null);
   const district = DISTRICTS.find(d => d.id === selected)!;
+
+  // buildings already hosting one of the player's open museums
+  const occupied = new Set(
+    E.openMuseums(state).map(m => m.buildingId));
+
+  // --- the "name your new museum" dialog --------------------
+  if (openingBuilding) {
+    const b = BUILDINGS[openingBuilding];
+    return (
+      <div className="panel">
+        <h2>A New Museum<span className="sub">in the {b.name}</span></h2>
+        <p className="empty-note">
+          Opening a museum here costs {money(b.moveCost)} and adds
+          {' '}{money(b.maintenance)}/week in upkeep. It starts empty — move
+          works into it from your collection. Name your new museum:
+        </p>
+        <div className="field">
+          <label>Museum name</label>
+          <input value={newName} maxLength={40}
+            placeholder="e.g. The Riverside Wing"
+            onChange={e => setNewName(e.target.value)} />
+        </div>
+        <div className="divider" />
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button disabled={state.funds < b.moveCost}
+            onClick={() => {
+              const r = E.openMuseumAt(state, openingBuilding, newName);
+              if (r.error) { flash(r.error); return; }
+              apply(r);
+              setOpeningBuilding(null);
+              setNewName('');
+              goGalleries();
+            }}>
+            Open Museum · {money(b.moveCost)}
+          </button>
+          <button className="ghost"
+            onClick={() => { setOpeningBuilding(null); setNewName(''); }}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- the close-confirmation dialog ------------------------
+  if (confirmClose) {
+    const m = state.museums.find(mm => mm.id === confirmClose)!;
+    return (
+      <div className="panel">
+        <h2>Close {m.name}?<span className="sub">this cannot be undone</span></h2>
+        <p className="empty-note">
+          Closing {m.name} stops its upkeep. Every work on its walls returns
+          to your collection, unplaced. Any loans there end and are returned
+          to their lenders — a returned loan cannot be hung again.
+        </p>
+        <div className="divider" />
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="ghost"
+            onClick={() => {
+              const r = E.closeMuseum(state, confirmClose);
+              if (r.error) { flash(r.error); return; }
+              apply(r);
+              setConfirmClose(null);
+            }}>
+            Close This Museum
+          </button>
+          <button onClick={() => setConfirmClose(null)}>Keep It Open</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
+      {/* the player's museums */}
+      <div className="panel">
+        <h2>Your Museums
+          <span className="sub">{E.openMuseums(state).length} open</span></h2>
+        <p className="empty-note">
+          Each museum has its own building, fame and visitors. Switch to one
+          to manage it; close one to save its upkeep.
+        </p>
+        <div className="divider" />
+        {E.openMuseums(state).map(m => {
+          const b = BUILDINGS[m.buildingId];
+          const isActive = m.id === state.activeMuseumId;
+          return (
+            <div className="row" key={m.id}>
+              <div className="meta">
+                <div className="name">
+                  {m.name}
+                  {isActive && <span className="bld-tag here"> Viewing</span>}
+                </div>
+                <div className="info">
+                  {b.name} · {m.fame} fame ·{' '}
+                  {Math.round(E.computeVisitors(state, m))} visitors/wk
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {!isActive && (
+                  <button onClick={() => {
+                    setState(E.switchMuseum(state, m.id));
+                    goGalleries();
+                  }}>
+                    Manage
+                  </button>
+                )}
+                {E.openMuseums(state).length > 1 && (
+                  <button className="ghost"
+                    onClick={() => setConfirmClose(m.id)}>
+                    Close
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* the city map */}
       <div className="panel">
         <h2>The City<span className="sub">districts &amp; venues</span></h2>
         <p className="empty-note">
-          Tap a district marker to see its venues. You move your museum to a
-          greater building as funds allow — the collection comes with you.
+          Tap a district to see its venues. You can open a new museum in any
+          venue you can afford — your collection is shared across them all.
         </p>
         <div className="divider" />
         <div className="citymap">
@@ -506,11 +667,8 @@ function MapTab({
           ) : (
             district.buildingIds.map(bid => {
               const b = BUILDINGS[bid];
-              const idx = E.BUILDING_ORDER_PUBLIC.indexOf(bid);
-              const isHere = bid === state.buildingId;
-              const isOwnedPast = idx < ownedIndex;
-              const isNext = idx === ownedIndex + 1;
               const rooms = b.halls.reduce((s, h) => s + h.roomCap, 0);
+              const here = occupied.has(bid);
               return (
                 <div className="bld-row" key={bid}>
                   <div className="meta">
@@ -519,18 +677,18 @@ function MapTab({
                       {b.blurb} · {rooms} rooms · upkeep {money(b.maintenance)}/wk
                     </div>
                   </div>
-                  {isHere ? (
-                    <span className="bld-tag here">Current</span>
-                  ) : isOwnedPast ? (
-                    <span className="bld-tag owned">Left behind</span>
-                  ) : isNext ? (
-                    <button
-                      disabled={state.funds < b.moveCost || !!state.pendingItemId}
-                      onClick={() => apply(E.moveToBuilding(state, bid))}>
-                      Acquire · {money(b.moveCost)}
-                    </button>
+                  {here ? (
+                    <span className="bld-tag here">A museum here</span>
                   ) : (
-                    <span className="bld-tag locked">Locked</span>
+                    <button
+                      disabled={state.funds < b.moveCost
+                        || !!state.pendingItemId}
+                      onClick={() => {
+                        setNewName('');
+                        setOpeningBuilding(bid);
+                      }}>
+                      Open · {money(b.moveCost)}
+                    </button>
                   )}
                 </div>
               );
@@ -541,6 +699,7 @@ function MapTab({
     </>
   );
 }
+
 
 /* ============================================================
    GALLERIES TAB — cutaway interior with drag-drop slots
@@ -555,26 +714,38 @@ const ROOM_TINT: Record<string, string> = {
 function tintFor(style: StyleId) { return ROOM_TINT[style] || '#4a4030'; }
 
 function GalleriesTab({
-  state, apply, flash, onArtifact,
+  state, apply, flash, setState, onArtifact,
 }: {
   state: GameState;
   apply: (r: { state: GameState; error?: string }) => void;
   flash: (m: string) => void;
+  setState: (s: GameState) => void;
   onArtifact: (id: string) => void;
 }) {
-  const building = BUILDINGS[state.buildingId];
+  const museum = E.activeMuseum(state);
+  const building = BUILDINGS[museum.buildingId];
   const [selectedRoom, setSelectedRoom] = useState<number | null>(null);
   const [heldArt, setHeldArt] = useState<string | null>(null);
   const [sellArt, setSellArt] = useState<string | null>(null);
+  // which wing of the active museum is being viewed, and the
+  // wing-rename dialog target (a hallId, or null)
+  const [selectedWing, setSelectedWing] = useState<string>(
+    building.halls[0]?.id || '');
+  const [renamingWing, setRenamingWing] = useState<string | null>(null);
+  const [wingNameDraft, setWingNameDraft] = useState('');
+  // if the active museum changed, snap the wing back to its first
+  if (building.halls.length && !building.halls.some(h => h.id === selectedWing)) {
+    setSelectedWing(building.halls[0].id);
+  }
 
-  const placedSet = new Set(state.rooms.flatMap(r => r.items));
+  const placedSet = new Set(museum.rooms.flatMap(r => r.items));
   const unplaced = state.owned.filter(id => !placedSet.has(id));
   if (state.pendingItemId && !unplaced.includes(state.pendingItemId))
     unplaced.unshift(state.pendingItemId);
 
   const placeInto = (artId: string, roomId: number) => {
     const art = ARTIFACT_BY_ID[artId];
-    const room = state.rooms.find(r => r.id === roomId)!;
+    const room = museum.rooms.find(r => r.id === roomId)!;
     if (!E.canPlace(room, art.style)) {
       flash(E.roomIsFull(room) ? 'That room is full.'
         : 'That room is themed to a different style.');
@@ -585,14 +756,30 @@ function GalleriesTab({
   };
 
   const halls: Record<string, { name: string; rooms: Room[] }> = {};
-  for (const r of state.rooms)
+  for (const r of museum.rooms)
     (halls[r.hallId] = halls[r.hallId] || { name: r.hallName, rooms: [] })
       .rooms.push(r);
 
   return (
     <>
       <div className="panel" style={{ paddingBottom: 8 }}>
-        <h2>{building.name}<span className="sub">your galleries</span></h2>
+        <h2>{museum.name}
+          <span className="sub">
+            {building.name} · {museum.fame} fame
+          </span>
+        </h2>
+        {E.openMuseums(state).length > 1 && (
+          <div className="museum-switch">
+            {E.openMuseums(state).map(m => (
+              <span key={m.id}
+                className={'filter-chip'
+                  + (m.id === state.activeMuseumId ? ' active' : '')}
+                onClick={() => setState(E.switchMuseum(state, m.id))}>
+                {m.name}
+              </span>
+            ))}
+          </div>
+        )}
         {unplaced.length > 0 && (
           <p className="drag-hint">
             Drag a work from your collection into a grey slot — or tap a work,
@@ -601,28 +788,96 @@ function GalleriesTab({
         )}
       </div>
 
-      {Object.entries(halls).map(([hid, hall]) => (
-        <div className="gallery-frame" key={hid}>
-          <div className="gallery-hall-label">
-            {hall.name}
-            {state.wingNames[hid] ? ` — the ${state.wingNames[hid]} Wing` : ''}
+      {/* wing switcher — show one wing at a time */}
+      <div className="panel" style={{ paddingTop: 10, paddingBottom: 10 }}>
+        <div className="wing-switch">
+          {building.halls.map(h => {
+            const wingRooms = museum.rooms.filter(r => r.hallId === h.id);
+            const openRooms = wingRooms.filter(r => r.unlocked).length;
+            const label = museum.wingNames[h.id] || h.name;
+            return (
+              <span key={h.id}
+                className={'wing-chip'
+                  + (selectedWing === h.id ? ' active' : '')}
+                onClick={() => setSelectedWing(h.id)}>
+                {label}
+                <span className="wing-chip-sub">{openRooms}/{wingRooms.length}</span>
+              </span>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* the selected wing */}
+      {(() => {
+        const hall = halls[selectedWing];
+        if (!hall) return null;
+        const cohesion = E.wingCohesionBonus(museum, selectedWing);
+        return (
+          <div className="gallery-frame">
+            <div className="gallery-hall-label">
+              <span>{museum.wingNames[selectedWing] || hall.name}</span>
+              <button className="ghost small wing-rename-btn"
+                onClick={() => {
+                  setWingNameDraft(museum.wingNames[selectedWing] || '');
+                  setRenamingWing(selectedWing);
+                }}>
+                Rename
+              </button>
+            </div>
+            {cohesion > 0 && (
+              <div className="wing-cohesion">
+                Thematic wing — a cohesive style earns +{cohesion} fame
+                {' '}toward this museum.
+              </div>
+            )}
+            <div className="gallery-rooms">
+              {hall.rooms.map(room => (
+                <GalleryRoom key={room.id} state={state} room={room}
+                  selected={selectedRoom === room.id}
+                  heldArt={heldArt}
+                  onSelect={() => setSelectedRoom(
+                    selectedRoom === room.id ? null : room.id)}
+                  onAssign={st => apply(E.assignRoom(state, room.id, st))}
+                  onOpen={() => apply(E.openRoom(state))}
+                  onDropArt={artId => placeInto(artId, room.id)}
+                  onSlotClick={onArtifact}
+                  onRemoveArt={artId => apply(E.removeArtifact(state, artId))} />
+              ))}
+            </div>
           </div>
-          <div className="gallery-rooms">
-            {hall.rooms.map(room => (
-              <GalleryRoom key={room.id} state={state} room={room}
-                selected={selectedRoom === room.id}
-                heldArt={heldArt}
-                onSelect={() => setSelectedRoom(
-                  selectedRoom === room.id ? null : room.id)}
-                onAssign={st => apply(E.assignRoom(state, room.id, st))}
-                onOpen={() => apply(E.openRoom(state))}
-                onDropArt={artId => placeInto(artId, room.id)}
-                onSlotClick={onArtifact}
-                onRemoveArt={artId => apply(E.removeArtifact(state, artId))} />
-            ))}
+        );
+      })()}
+
+      {renamingWing && (
+        <div className="modal-backdrop" onClick={() => setRenamingWing(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <h3 style={{ fontSize: 20, marginBottom: 8 }}>Name this wing</h3>
+            <p className="empty-note" style={{ marginBottom: 10 }}>
+              Give the wing a name of your choosing. Leave it blank to restore
+              its default name.
+            </p>
+            <div className="field">
+              <input value={wingNameDraft} maxLength={32}
+                placeholder={building.halls.find(h => h.id === renamingWing)?.name}
+                onChange={e => setWingNameDraft(e.target.value)} />
+            </div>
+            <div className="divider" />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => {
+                setState(E.renameWing(state, museum.id, renamingWing,
+                  wingNameDraft));
+                setRenamingWing(null);
+              }}>
+                Save Name
+              </button>
+              <button className="ghost" onClick={() => setRenamingWing(null)}>
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
-      ))}
+      )}
 
       <div className="drawer">
         <h3>Your Private Collection</h3>
@@ -644,9 +899,12 @@ function GalleriesTab({
                 const ini = art.name.split(/\s+/)
                   .filter(w => /[A-Za-z]/.test(w))
                   .slice(0, 2).map(w => w[0].toUpperCase()).join('');
+                const unanalyzed = state.unanalyzed.some(
+                  u => u.artifactId === id);
                 return (
                   <div key={id}
-                    className={'acq' + (heldArt === id ? ' selected' : '')}
+                    className={'acq' + (heldArt === id ? ' selected' : '')
+                      + (unanalyzed ? ' unanalyzed' : '')}
                     draggable
                     onDragStart={e => {
                       e.dataTransfer.setData('text/plain', id);
@@ -665,10 +923,25 @@ function GalleriesTab({
                         <span className={'pill ' + band.cls}>{band.name}</span>
                         <span className="acq-meta">{art.year}</span>
                       </div>
-                      <button className="ghost small acq-sell"
-                        onClick={e => { e.stopPropagation(); setSellArt(id); }}>
-                        Sell…
-                      </button>
+                      {unanalyzed && (
+                        <div className="acq-unverified">
+                          Authenticity not confirmed
+                        </div>
+                      )}
+                      {unanalyzed ? (
+                        <button className="ghost small acq-sell"
+                          onClick={e => {
+                            e.stopPropagation();
+                            apply(E.analyzeArtifact(state, id));
+                          }}>
+                          Analyse · {money(E.analysisFee(id))}
+                        </button>
+                      ) : (
+                        <button className="ghost small acq-sell"
+                          onClick={e => { e.stopPropagation(); setSellArt(id); }}>
+                          Sell…
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -872,7 +1145,8 @@ function GalleryRoom({
    WEEK TAB
    ============================================================ */
 function WeekTab({
-  state, setState, flash, goGalleries, onNextWeek, onExpeditionResult,
+  state, setState, flash, goGalleries, onNextWeek, onExpeditionResult, onGala,
+  onBlackMarket,
 }: {
   state: GameState;
   setState: (s: GameState) => void;
@@ -880,6 +1154,8 @@ function WeekTab({
   goGalleries: () => void;
   onNextWeek: () => void;
   onExpeditionResult: (expeditionId: string) => void;
+  onGala: () => void;
+  onBlackMarket: () => void;
 }) {
   if (state.activeEvent) {
     return <EventInterior state={state} setState={setState} flash={flash}
@@ -901,20 +1177,18 @@ function WeekTab({
           <div className="divider" />
           <div className="filter-group-label">Expeditions Returned</div>
           {E.expeditionsReady(state).map(exp => {
-            const def = EXPEDITION_KINDS.find(k => k.id === exp.kind)!;
+            const def = EXPEDITION_TIERS.find(t => t.id === exp.tier)!;
             return (
               <div className="event-card" key={exp.id}>
                 <div className="event-kind">Expedition</div>
                 <div className="event-title">{def.name}</div>
                 <div className="event-body">
-                  Your team sought {STYLES[exp.style].name} works.
-                  {exp.incident
-                    ? ' They met trouble on the way — the haul was reduced.'
-                    : ' The journey went smoothly.'}
+                  Your team sought {STYLES[exp.style].name} and has reached
+                  the site. Play out the dig to see what they uncover.
                 </div>
                 <div className="event-controls">
                   <button onClick={() => onExpeditionResult(exp.id)}>
-                    Check Expedition Result
+                    Play Out the Dig
                   </button>
                 </div>
               </div>
@@ -923,12 +1197,52 @@ function WeekTab({
         </>
       )}
 
+      {/* a society gala — court collectors for a loan */}
+      {state.galaPending && (
+        <>
+          <div className="divider" />
+          <div className="filter-group-label">Society</div>
+          <div className="event-card">
+            <div className="event-kind">Gala</div>
+            <div className="event-title">A Society Gala</div>
+            <div className="event-body">
+              Collectors, aristocrats and patrons gather this week. Work the
+              room, find a collection you covet, and persuade its owner to
+              loan a piece to your museum.
+            </div>
+            <div className="event-controls">
+              <button onClick={onGala}>Attend the Gala</button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* a black-market offer — a bargain, if it is genuine */}
+      {state.blackMarketPending && (
+        <>
+          <div className="divider" />
+          <div className="filter-group-label">A Discreet Word</div>
+          <div className="event-card">
+            <div className="event-kind">Black Market</div>
+            <div className="event-title">An Unmarked Offer</div>
+            <div className="event-body">
+              A seller has surfaced with a piece priced far below its rarity.
+              It could be a genuine bargain — or a forgery. Examine it before
+              you decide.
+            </div>
+            <div className="event-controls">
+              <button onClick={onBlackMarket}>Hear Them Out</button>
+            </div>
+          </div>
+        </>
+      )}
+
       {/* auction houses — join the ones your fame has opened */}
       <div className="divider" />
       <div className="filter-group-label">Auction Houses</div>
       {AUCTION_HOUSES.map(h => {
         const joined = state.joinedHouses.includes(h.id);
-        const unlocked = state.fame >= h.fameToUnlock;
+        const unlocked = E.totalFame(state) >= h.fameToUnlock;
         return (
           <div className="row" key={h.id}>
             <div className="meta">
@@ -1359,11 +1673,12 @@ function ManageTab({
 /* ============================================================
    PERSONNEL TAB — hired staff + recruits to hire
    ============================================================ */
-const ROLE_BLURB: Record<string, string> = {
-  curator: 'Lifts weekly fame and draws visitors in their own right.',
-  researcher: 'Required to research new styles; a master shortens the work.',
-  explorer: 'Leads expeditions, improving what they bring home.',
-};
+/** find the label + effect text for a staff member's specialty */
+function specInfo(m: { role: string; specialty: string }) {
+  const list = E.STAFF_SPECIALTIES[m.role as 'curator' | 'researcher' | 'explorer'];
+  return list.find(x => x.id === m.specialty)
+    || { label: E.ROLE_NAME[m.role as 'curator'], effect: '' };
+}
 
 function PersonnelTab({
   state, apply,
@@ -1391,11 +1706,11 @@ function PersonnelTab({
                 <div className="meta">
                   <div className="name">
                     {m.name}
-                    {' '}<span className="tier-tag">{E.ROLE_NAME[m.role]}</span>
+                    {' '}<span className="tier-tag">{specInfo(m).label}</span>
                   </div>
                   <div className="info">
                     {'★'.repeat(m.skill)}{'☆'.repeat(3 - m.skill)} ·
-                    {' '}{money(m.wage)}/week — {ROLE_BLURB[m.role]}
+                    {' '}{money(m.wage)}/week — {specInfo(m).effect}
                   </div>
                 </div>
                 <button className="ghost"
@@ -1424,13 +1739,13 @@ function PersonnelTab({
                 <div className="meta">
                   <div className="name">
                     {c.name}
-                    {' '}<span className="tier-tag">{E.ROLE_NAME[c.role]}</span>
+                    {' '}<span className="tier-tag">{specInfo(c).label}</span>
                   </div>
                   <div className="info">
                     {'★'.repeat(c.skill)}{'☆'.repeat(3 - c.skill)} ·
                     {' '}{money(c.wage)}/week · signing fee {money(signingFee)}
                   </div>
-                  <div className="info">{ROLE_BLURB[c.role]}</div>
+                  <div className="info">{specInfo(c).effect}</div>
                 </div>
                 <button disabled={state.funds < signingFee}
                   onClick={() => apply(E.hireStaff(state, c.id))}>
@@ -1451,211 +1766,165 @@ function PersonnelTab({
    rarity-coloured back). One 3-second reveal, then three
    attempts to match a pair. Each matched pair wins that work.
    ============================================================ */
-function initialsOf(name: string): string {
-  return name.split(/\s+/).filter(w => /[A-Za-z]/.test(w))
-    .slice(0, 2).map(w => w[0].toUpperCase()).join('');
-}
 
-interface GameCard {
-  cardId: number;
-  artId: string;
-  initials: string;
-}
-
+/* ============================================================
+   EXPEDITION DIG BOARD — the mini-game
+   ============================================================ */
 function ExpeditionGame({
-  expedition, onFinish,
+  state, expedition, onFinish,
 }: {
-  expedition: { id: string; foundIds: string[]; kind: string; incident: boolean };
-  onFinish: (claimedIds: string[]) => void;
+  state: GameState;
+  expedition: Expedition;
+  onFinish: (result: { objectIds?: string[]; shardsWon?: number }) => void;
 }) {
-  const found = expedition.foundIds;
+  const def = EXPEDITION_TIERS.find(t => t.id === expedition.tier)!;
+  // explorer staff bonuses: a surveyor grants extra digs, a
+  // veteran raises hazard tolerance.
+  const bonusDigs = E.specialtySkill(state, 'surveyor');
+  const bonusTolerance = E.specialtySkill(state, 'veteran') >= 2 ? 1 : 0;
+  const [board, setBoard] = useState<Dig.DigBoard>(
+    () => Dig.makeBoard(def, bonusDigs, bonusTolerance));
+  const [started, setStarted] = useState(false);
 
-  // build the shuffled 12-card deck once. The expedition's single
-  // find is one true PAIR; the other ten cards are decoys with
-  // unique initials and no match — pure distraction. Match the real
-  // pair within three attempts and the work is yours.
-  const [deck] = useState<GameCard[]>(() => {
-    const GRID = 12;
-    const cards: GameCard[] = [];
-    let cid = 0;
-    // the real pair — the first found work
-    const realArt = found[0];
-    if (realArt) {
-      const ini = initialsOf(ARTIFACT_BY_ID[realArt].name);
-      cards.push({ cardId: cid++, artId: realArt, initials: ini });
-      cards.push({ cardId: cid++, artId: realArt, initials: ini });
-    }
-    // decoys — fill the rest of the grid with unmatched cards
-    const decoyInitials = [
-      'AR', 'BC', 'DL', 'EM', 'FN', 'GP', 'HS', 'JT', 'KV', 'LW',
-      'MX', 'NZ', 'OQ', 'RB', 'SD',
-    ];
-    let di = 0;
-    while (cards.length < GRID) {
-      cards.push({
-        cardId: cid++,
-        artId: '__decoy' + di,            // no real artifact — never matches
-        initials: decoyInitials[di % decoyInitials.length],
-      });
-      di++;
-    }
-    // Fisher-Yates shuffle
-    for (let i = cards.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [cards[i], cards[j]] = [cards[j], cards[i]];
-    }
-    return cards;
-  });
-
-  const realArtId = found[0] || null;
-
-  type Phase = 'intro' | 'revealing' | 'playing' | 'done';
-  const [phase, setPhase] = useState<Phase>('intro');
-  const [flipped, setFlipped] = useState<number[]>([]);   // cardIds face-up now
-  const [matchedArt, setMatchedArt] = useState<string[]>([]); // won artIds
-  const [matchedCards, setMatchedCards] = useState<number[]>([]);
-  const [attemptsLeft, setAttemptsLeft] = useState(3);
-  const [pick, setPick] = useState<number[]>([]);          // current 1-2 picks
-  const [busy, setBusy] = useState(false);
-
-  // the one-time 3-second reveal of all twelve cards
-  const doReveal = () => {
-    setPhase('revealing');
-    setFlipped(deck.map(c => c.cardId));
-    window.setTimeout(() => {
-      setFlipped([]);
-      setPhase('playing');
-    }, 4000);
-  };
-
-  const onCardClick = (card: GameCard) => {
-    if (phase !== 'playing' || busy) return;
-    if (matchedCards.includes(card.cardId)) return;
-    if (pick.includes(card.cardId)) return;
-    const nextPick = [...pick, card.cardId];
-    setPick(nextPick);
-    if (nextPick.length === 2) {
-      setBusy(true);
-      const [a, b] = nextPick.map(id => deck.find(c => c.cardId === id)!);
-      // a match only counts for a REAL artifact (decoys never match)
-      const isMatch = a.artId === b.artId && !a.artId.startsWith('__decoy');
-      window.setTimeout(() => {
-        let won = false;
-        if (isMatch) {
-          setMatchedArt(m => [...m, a.artId]);
-          setMatchedCards(m => [...m, a.cardId, b.cardId]);
-          won = true;
+  // finish: turn the board result into artifact ids / shard count
+  const collect = () => {
+    const res = Dig.boardResult(board);
+    if (def.yieldsObjects) {
+      // roll that many real works of the right band+style
+      const ids: string[] = [];
+      const owned = new Set<string>();
+      const band = def.id === 'common' ? 'common' : 'uncommon';
+      for (let i = 0; i < res.artifacts; i++) {
+        const pool = ARTIFACTS.filter(a =>
+          a.style === expedition.style && !owned.has(a.id)
+          && (band === 'common' ? a.score < 10 : a.score >= 10 && a.score < 20));
+        const fallback = ARTIFACTS.filter(a => !owned.has(a.id)
+          && (band === 'common' ? a.score < 10 : a.score >= 10 && a.score < 20));
+        const use = pool.length ? pool : fallback;
+        if (use.length) {
+          const pick = use[Math.floor(Math.random() * use.length)];
+          ids.push(pick.id); owned.add(pick.id);
         }
-        const left = attemptsLeft - 1;
-        setAttemptsLeft(left);
-        setPick([]);
-        setBusy(false);
-        // the game ends when the real pair is found, or attempts run out
-        if (won || left <= 0) setPhase('done');
-      }, 900);
+      }
+      onFinish({ objectIds: ids });
+    } else {
+      onFinish({ shardsWon: res.shards });
     }
   };
-
-  const faceUp = (cardId: number) =>
-    flipped.includes(cardId) || pick.includes(cardId)
-    || matchedCards.includes(cardId);
 
   // --- intro -------------------------------------------------
-  if (phase === 'intro') {
+  if (!started) {
     return (
       <div className="panel">
-        <h2>The Expedition Returns
-          <span className="sub">recover the find</span></h2>
+        <h2>{def.name}
+          <span className="sub">{STYLES[expedition.style].name} · the dig</span></h2>
         <p className="empty-note">
-          Your team brought back a single crated work — but it is hidden
-          among twelve unmarked cards. Two of them are a matching pair; the
-          rest are decoys. You will see every card for four seconds, once.
-          Then you have three attempts to turn over the matching pair and
-          claim the find.
-          {expedition.incident
-            && ' The expedition met trouble along the way — but the haul made it home.'}
+          Your team has reached the site. Reveal tiles to dig — a
+          {' '}<b>clue</b> means a find sits next to it, a <b>danger</b> mark
+          means a hazard does. You have <b>{def.digs} digs</b>.
+          {def.bombTolerance === 1
+            ? ' A single hazard ends the expedition with nothing.'
+            : ` Hit ${def.bombTolerance} hazards and the expedition collapses.`}
+          {' '}You may stop and bank your findings at any time.
+        </p>
+        <p className="empty-note">
+          {def.yieldsObjects
+            ? `This dig can turn up whole ${STYLES[expedition.style].name} works.`
+            : `This dig yields ${def.id} shards — bank enough to summon a `
+              + `${def.id} work.`}
         </p>
         <div className="divider" />
-        <button onClick={doReveal}>Reveal the Cards</button>
+        <button onClick={() => setStarted(true)}>Begin the Dig</button>
       </div>
     );
   }
 
   // --- done --------------------------------------------------
-  if (phase === 'done') {
+  if (board.finished) {
+    const res = Dig.boardResult(board);
+    const gotSomething = res.artifacts > 0 || res.shards > 0;
     return (
       <div className="panel">
-        <h2>Expedition Concluded
+        <h2>{board.ejected ? 'Expedition Lost' : 'Expedition Complete'}
           <span className="sub">
-            {matchedArt.length > 0 ? 'the find is yours' : 'the find was lost'}
-          </span></h2>
-        {matchedArt.length === 0 ? (
+            {board.ejected ? 'the site claimed everything'
+              : gotSomething ? 'findings secured' : 'nothing found'}
+          </span>
+        </h2>
+        {board.ejected ? (
           <p className="empty-note">
-            The matching pair eluded you, and the crate was lost in the
-            confusion. A hard lesson — the expedition returns empty-handed.
+            One hazard too many — the dig collapsed and the team escaped with
+            nothing. The findings are lost.
+          </p>
+        ) : def.yieldsObjects ? (
+          <p className="empty-note">
+            The team brings home {res.artifacts} whole work(s) for the
+            collection.{res.shards > 0 && ' Loose shards were left behind.'}
           </p>
         ) : (
-          <>
-            <h3 style={{ marginTop: 4 }}>New Item</h3>
-            <p className="drag-hint">
-              This work is now in your private collection.
-            </p>
-            <div className="results-grid">
-              {matchedArt.map(id =>
-                <ItemCard key={id} artifact={ARTIFACT_BY_ID[id]} />)}
-            </div>
-          </>
+          <p className="empty-note">
+            The team banked <b>{res.shards} {def.id} shard(s)</b> of
+            {' '}{STYLES[expedition.style].name}. Collect {SUMMON_COST[def.id as 'rare' | 'epic']}
+            {' '}to summon a work.
+          </p>
         )}
         <div className="divider" />
-        <button onClick={() => onFinish(matchedArt)}>Collect &amp; Continue</button>
+        <button onClick={collect}>Collect &amp; Continue</button>
       </div>
     );
   }
 
-  // --- revealing / playing ----------------------------------
+  // --- the board ---------------------------------------------
   return (
     <div className="panel">
-      <h2>Match the Find
-        <span className="sub">
-          {phase === 'revealing' ? 'study the cards'
-            : `${attemptsLeft} attempt(s) left`}
-        </span>
-      </h2>
-      <p className="drag-hint">
-        {phase === 'revealing'
-          ? 'Memorise the pair — the cards turn back in a moment.'
-          : 'Turn over the two cards with matching initials to claim the find.'}
-      </p>
-      <div className="memory-grid">
-        {deck.map(card => {
-          const up = faceUp(card.cardId);
-          const isMatched = matchedCards.includes(card.cardId);
-          const isDecoy = card.artId.startsWith('__decoy');
-          const band = (!isDecoy && up)
-            ? rarityForScore(ARTIFACT_BY_ID[card.artId].score) : null;
+      <h2>{def.name}
+        <span className="sub">{board.digsLeft} dig(s) left</span></h2>
+      <div className="dig-status">
+        <span>Hazards hit: {board.bombsHit}/{board.bombTolerance}</span>
+        {def.yieldsObjects
+          ? <span>Works found: {board.artifactsFound}</span>
+          : <span>Shards banked: {board.shardsBanked}</span>}
+      </div>
+      <div className={'dig-grid size-' + board.size}>
+        {board.tiles.map((tile, i) => {
+          const out = !tile.revealed;
+          let face = '';
+          let cls = 'dig-tile';
+          if (tile.revealed) {
+            cls += ' open';
+            if (tile.kind === 'bomb') { face = '✸'; cls += ' bomb'; }
+            else if (tile.kind === 'danger') { face = '⚠'; cls += ' danger'; }
+            else if (tile.kind === 'clue') { face = '◆'; cls += ' clue'; }
+            else if (tile.kind === 'find') {
+              face = tile.findKind === 'artifact' ? '★' : '◈';
+              cls += ' find';
+            } else { cls += ' empty'; }
+          }
           return (
-            <button key={card.cardId}
-              className={'memory-card' + (up ? ' up' : '')
-                + (isMatched ? ' matched' : '')}
-              style={band ? { ['--rar' as string]: band.hex } : undefined}
-              disabled={phase !== 'playing' || isMatched}
-              onClick={() => onCardClick(card)}>
-              {up ? card.initials : '?'}
+            <button key={i} className={cls}
+              disabled={tile.revealed || board.digsLeft <= 0}
+              onClick={() => setBoard(Dig.revealTile(board, i))}>
+              {out ? '' : face}
             </button>
           );
         })}
       </div>
-      {realArtId && matchedArt.length > 0 && (
-        <p className="empty-note" style={{ marginTop: 10 }}>
-          Recovered: {ARTIFACT_BY_ID[realArtId].name}.
-        </p>
-      )}
+      <div className="dig-legend">
+        <span>◆ clue — a find is adjacent</span>
+        <span>⚠ danger — a hazard is adjacent</span>
+        <span>★◈ find</span>
+        <span>✸ hazard</span>
+      </div>
+      <div className="divider" />
+      <button className="ghost" onClick={() => setBoard(Dig.bankBoard(board))}>
+        Stop &amp; Bank Findings
+      </button>
     </div>
   );
 }
 
 /* ============================================================
-   EXPEDITIONS TAB — commission, track, and collect expeditions
+   EXPEDITIONS TAB — commission, track, summon
    ============================================================ */
 function ExpeditionsTab({
   state, apply,
@@ -1667,57 +1936,85 @@ function ExpeditionsTab({
   const ready = E.expeditionsReady(state);
   const freeExplorers = E.freeExplorers(state);
 
-  // commission form state
-  const [kind, setKind] = useState<string>(EXPEDITION_KINDS[0].id);
+  const [tier, setTier] = useState<string>(EXPEDITION_TIERS[0].id);
   const [style, setStyle] = useState<string>(state.specialties[0] || '');
-  const [budgetInput, setBudgetInput] = useState('');
   const [leaderId, setLeaderId] = useState<string>('');
 
-  const kindDef = EXPEDITION_KINDS.find(k => k.id === kind)!;
-  const budget = parseInt(budgetInput || '0', 10);
-  const leader = leaderId
-    ? state.staff.find(m => m.id === leaderId) : null;
-  // a preview of the rarity odds at the chosen budget
-  const odds = E.expeditionOdds(Math.max(kindDef.minBudget, budget),
-    leader ? leader.skill : 0);
-  const bandNames = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legend'];
+  const tierDef = EXPEDITION_TIERS.find(t => t.id === tier)!;
+  const canCommission = !!style && state.funds >= tierDef.cost;
 
-  const canCommission = budget >= kindDef.minBudget
-    && budget <= state.funds && !!style;
+  // shard holdings, grouped for the summoning panel
+  const shardRows: { tier: 'rare' | 'epic'; style: StyleId; have: number }[] = [];
+  for (const key of Object.keys(state.shards)) {
+    const have = state.shards[key];
+    if (have <= 0) continue;
+    const [t, st] = key.split(':') as ['rare' | 'epic', StyleId];
+    shardRows.push({ tier: t, style: st, have });
+  }
 
   return (
     <>
-      {/* ready-to-collect expeditions */}
       {ready.length > 0 && (
         <div className="panel">
-          <h2>Returned<span className="sub">awaiting your attention</span></h2>
+          <h2>Returned<span className="sub">ready to play out</span></h2>
           <p className="empty-note">
-            {ready.length} expedition(s) have returned. Collect their findings
-            from the Week tab.
+            {ready.length} expedition(s) have returned — play out the dig from
+            the Week tab.
           </p>
         </div>
       )}
 
-      {/* active expeditions */}
+      {/* summoning */}
       <div className="panel">
-        <h2>Expeditions in Progress
-          <span className="sub">{active.length} underway</span></h2>
-        {active.length === 0 ? (
+        <h2>Summoning<span className="sub">spend shards on a work</span></h2>
+        {shardRows.length === 0 ? (
           <p className="empty-note">
-            No expeditions are underway. Commission one below.
+            No shards yet. Rare and Epic expeditions bank shards; collect
+            enough of one style to summon a work.
           </p>
         ) : (
+          shardRows.map(row => {
+            const cost = SUMMON_COST[row.tier];
+            const ready2 = row.have >= cost;
+            return (
+              <div className="row" key={row.tier + row.style}>
+                <div className="meta">
+                  <div className="name">
+                    {row.tier === 'rare' ? 'Rare' : 'Epic'} ·
+                    {' '}{STYLES[row.style].name}
+                  </div>
+                  <div className="info">
+                    {row.have} / {cost} shards
+                    {ready2 ? ' — ready to summon' : ' — keep digging'}
+                  </div>
+                </div>
+                <button disabled={!ready2}
+                  onClick={() => apply(E.summonArtifact(state, row.tier, row.style))}>
+                  Summon
+                </button>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* active expeditions */}
+      <div className="panel">
+        <h2>In Progress<span className="sub">{active.length} underway</span></h2>
+        {active.length === 0 ? (
+          <p className="empty-note">No expeditions are underway.</p>
+        ) : (
           active.map(e => {
-            const def = EXPEDITION_KINDS.find(k => k.id === e.kind)!;
+            const d = EXPEDITION_TIERS.find(t => t.id === e.tier)!;
             const ldr = e.leaderId
               ? state.staff.find(m => m.id === e.leaderId) : null;
             return (
               <div className="row" key={e.id}>
                 <div className="meta">
-                  <div className="name">{def.name}</div>
+                  <div className="name">{d.name}</div>
                   <div className="info">
-                    Seeking {STYLES[e.style].name} · budget {money(e.budget)}
-                    {ldr ? ` · led by ${ldr.name}` : ' · no leader'}
+                    Seeking {STYLES[e.style].name}
+                    {ldr ? ` · led by ${ldr.name}` : ''}
                   </div>
                 </div>
                 <span className="bld-tag locked">
@@ -1729,22 +2026,27 @@ function ExpeditionsTab({
         )}
       </div>
 
-      {/* commission a new expedition */}
+      {/* commission */}
       <div className="panel">
         <h2>Commission an Expedition
           <span className="sub">send a team into the field</span></h2>
 
-        <div className="filter-group-label">Type</div>
+        <div className="filter-group-label">Tier</div>
         <div className="filter-bar">
-          {EXPEDITION_KINDS.map(k => (
-            <span key={k.id}
-              className={'filter-chip' + (kind === k.id ? ' active' : '')}
-              onClick={() => setKind(k.id)}>
-              {k.name}
+          {EXPEDITION_TIERS.map(t => (
+            <span key={t.id}
+              className={'filter-chip' + (tier === t.id ? ' active' : '')}
+              onClick={() => setTier(t.id)}>
+              {t.name}
             </span>
           ))}
         </div>
-        <p className="empty-note">{kindDef.blurb}</p>
+        <p className="empty-note">{tierDef.blurb}</p>
+        <p className="empty-note">
+          Cost {money(tierDef.cost)} · {tierDef.gridSize}×{tierDef.gridSize} board ·
+          {' '}{tierDef.digs} digs · {tierDef.bombs} hazard(s),
+          {' '}{tierDef.bombTolerance === 1 ? 'one ends it' : `tolerate ${tierDef.bombTolerance}`}.
+        </p>
 
         <div className="filter-group-label">Style sought</div>
         {state.specialties.length === 0 ? (
@@ -1761,7 +2063,7 @@ function ExpeditionsTab({
           </div>
         )}
 
-        <div className="filter-group-label">Leader</div>
+        <div className="filter-group-label">Leader (optional)</div>
         <div className="filter-bar">
           <span className={'filter-chip' + (leaderId === '' ? ' active' : '')}
             onClick={() => setLeaderId('')}>
@@ -1775,51 +2077,349 @@ function ExpeditionsTab({
             </span>
           ))}
         </div>
-        {freeExplorers.length === 0 && (
-          <p className="empty-note">
-            No expedition leaders are free — hire an Explorer in Personnel for
-            better odds.
-          </p>
-        )}
 
-        <div className="field" style={{ maxWidth: 220 }}>
-          <label>Budget (§) — min {money(kindDef.minBudget)}</label>
-          <input value={budgetInput} inputMode="numeric"
-            placeholder={String(kindDef.minBudget)}
-            onChange={e => setBudgetInput(e.target.value.replace(/[^0-9]/g, ''))} />
-        </div>
-        <p className="empty-note">
-          A larger budget finds rarer works. At {money(Math.max(kindDef.minBudget, budget))}:
-        </p>
-        <div className="odds-bar">
-          {odds.map((w, i) => (
-            <div key={i} className="odds-seg"
-              style={{ flex: Math.max(0.01, w) }}
-              title={`${bandNames[i]} ~${Math.round(w)}%`}>
-              <span className="odds-label">
-                {bandNames[i]} {Math.round(w)}%
-              </span>
-            </div>
-          ))}
-        </div>
-        <p className="empty-note">
-          An expedition runs {EXPEDITION_WEEKS} weeks and may meet trouble on
-          the way. World Icons are never found in the field.
-        </p>
         <div className="divider" />
         <button disabled={!canCommission}
           onClick={() => {
-            apply(E.commissionExpedition(state, kind as never,
-              style as never, Math.max(kindDef.minBudget, budget),
-              leaderId || null));
-            setBudgetInput('');
+            apply(E.commissionExpedition(state, tier as never,
+              style as never, leaderId || null));
           }}>
-          Commission · {money(Math.max(kindDef.minBudget, budget))}
+          Commission · {money(tierDef.cost)}
         </button>
       </div>
     </>
   );
 }
+
+
+/* ============================================================
+   BLACK MARKET SCREEN — a bargain, if it is genuine
+   ============================================================ */
+function BlackMarketScreen({
+  state, onBuy, onClose,
+}: {
+  state: GameState;
+  onBuy: (artId: string, price: number, isReal: boolean,
+    truthKnown: boolean) => void;
+  onClose: () => void;
+}) {
+  const [offer] = useState<BM.BlackMarketOffer>(
+    () => BM.makeBlackMarketOffer(state.specialties));
+  const [points, setPoints] = useState<BM.ExamPoint[]>(
+    () => BM.makeExamPoints(offer));
+  const [phase, setPhase] = useState<
+    'intro' | 'examining' | 'verdict' | 'inspected'>('intro');
+  const [authenticated, setAuthenticated] = useState(false);
+  const [inspected, setInspected] = useState(false);
+
+  const art = ARTIFACT_BY_ID[offer.artifactId];
+  const allJudged = points.every(p => p.judged !== null);
+  const fee = BM.inspectionFee(offer);
+
+  // --- intro -------------------------------------------------
+  if (phase === 'intro') {
+    return (
+      <div className="panel">
+        <h2>A Discreet Offer<span className="sub">the black market</span></h2>
+        <div className="auction-art">
+          <Thumb artifact={art} size="lg" />
+          <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 20 }}>
+            {art.name}
+          </div>
+          <div className="bid-line">
+            {art.type} · {STYLES[art.style].name} · {art.year}
+          </div>
+          <div><RarityPill score={art.score} /></div>
+        </div>
+        <p className="empty-note">
+          A seller offers what is presented as a {rarityForScore(art.score).name}
+          {' '}work for just <b>{money(offer.askingPrice)}</b> — far below its
+          rarity. It may be the find of the year, or a clever forgery.
+        </p>
+        <p className="empty-note">
+          You may examine it first. Judge the examination points correctly
+          and you will know the truth before you decide.
+        </p>
+        <div className="divider" />
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={() => setPhase('examining')}>Examine the Piece</button>
+          <button className="ghost" onClick={onClose}>Walk Away</button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- examining: judge each point ---------------------------
+  if (phase === 'examining') {
+    return (
+      <div className="panel">
+        <h2>Authentication
+          <span className="sub">judge each examination point</span></h2>
+        <p className="drag-hint">
+          For each point, call it consistent with a genuine work, or
+          suspicious. Get at least four of five right to authenticate.
+        </p>
+        <div className="exam-list">
+          {points.map(p => (
+            <div className="exam-point" key={p.id}>
+              <div className="exam-label">{p.label}</div>
+              <div className="exam-buttons">
+                <button
+                  className={'exam-btn'
+                    + (p.judged === 'consistent' ? ' picked' : '')}
+                  onClick={() => setPoints(pts => pts.map(x =>
+                    x.id === p.id ? { ...x, judged: 'consistent' } : x))}>
+                  Consistent
+                </button>
+                <button
+                  className={'exam-btn'
+                    + (p.judged === 'suspicious' ? ' picked' : '')}
+                  onClick={() => setPoints(pts => pts.map(x =>
+                    x.id === p.id ? { ...x, judged: 'suspicious' } : x))}>
+                  Suspicious
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="divider" />
+        <button disabled={!allJudged}
+          onClick={() => {
+            setAuthenticated(BM.examSucceeded(points));
+            setPhase('verdict');
+          }}>
+          {allJudged ? 'Submit Your Assessment' : 'Judge every point first'}
+        </button>
+      </div>
+    );
+  }
+
+  // --- verdict: authenticated or uncertain -------------------
+  // the player knows the truth if they authenticated, or paid to inspect
+  const truthKnown = authenticated || inspected;
+  return (
+    <div className="panel">
+      <h2>
+        {truthKnown
+          ? (offer.isReal ? 'A Genuine Work' : 'A Forgery')
+          : 'Inconclusive'}
+        <span className="sub">
+          {authenticated ? 'your examination held'
+            : inspected ? 'the expert has reported'
+            : 'your examination fell short'}
+        </span>
+      </h2>
+
+      {truthKnown ? (
+        <p className="empty-note">
+          {offer.isReal
+            ? `The piece is authentic — a true ${rarityForScore(art.score).name} `
+              + `${art.name}, offered at ${money(offer.askingPrice)}.`
+            : `The piece is a forgery. Buying it would be ${money(offer.askingPrice)} `
+              + `thrown away.`}
+        </p>
+      ) : (
+        <p className="empty-note">
+          Your examination was not thorough enough to be sure. You can buy it
+          blind and take your chances — or pay {money(fee)} for an expert
+          inspection to learn the truth first.
+        </p>
+      )}
+
+      <div className="divider" />
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button
+          disabled={state.funds < offer.askingPrice}
+          onClick={() => {
+            onBuy(offer.artifactId, offer.askingPrice, offer.isReal,
+              truthKnown);
+            onClose();
+          }}>
+          {truthKnown ? 'Buy' : 'Buy Unverified'} · {money(offer.askingPrice)}
+        </button>
+        {!truthKnown && (
+          <button className="ghost"
+            disabled={state.funds < fee}
+            onClick={() => setInspected(true)}>
+            Pay {money(fee)} to Inspect
+          </button>
+        )}
+        <button className="ghost" onClick={onClose}>Walk Away</button>
+      </div>
+    </div>
+  );
+}
+
+
+/* ============================================================
+   GALA SCREEN — meet guests, inspect collections, persuade
+   ============================================================ */
+function GalaScreen({
+  state, onAccept, onClose,
+}: {
+  state: GameState;
+  onAccept: (artId: string, weeks: number, fee: number, lender: string) => void;
+  onClose: () => void;
+}) {
+  // guests are generated once when the gala opens
+  const [guests] = useState<Gala.Guest[]>(
+    () => Gala.makeGuests(state.specialties));
+  const [viewing, setViewing] = useState<Gala.Guest | null>(null);
+  const [convo, setConvo] = useState<Gala.Conversation | null>(null);
+  const [outcome, setOutcome] = useState<Gala.GalaOutcome | null>(null);
+  const [done, setDone] = useState(false);
+
+  // --- conversation outcome screen --------------------------
+  if (outcome) {
+    return (
+      <div className="panel">
+        <h2>{outcome.success ? 'A Loan Secured' : 'Politely Declined'}
+          <span className="sub">the conversation ends</span></h2>
+        <p className="empty-note">{outcome.message}</p>
+        {outcome.success && convo && (
+          <div className="results-grid">
+            <ItemCard artifact={ARTIFACT_BY_ID[convo.targetId]} />
+          </div>
+        )}
+        <div className="divider" />
+        <button onClick={() => {
+          if (outcome.success && convo) {
+            onAccept(convo.targetId, outcome.loanWeeks,
+              outcome.weeklyFee, convo.guest.name);
+          }
+          setDone(true);
+          setOutcome(null); setConvo(null); setViewing(null);
+        }}>
+          {outcome.success ? 'Hang the Loan & Return' : 'Return to the Gala'}
+        </button>
+      </div>
+    );
+  }
+
+  // --- after a loan is hung, or the player leaves -----------
+  if (done) {
+    return (
+      <div className="panel">
+        <h2>The Gala Ends<span className="sub">the evening is over</span></h2>
+        <p className="empty-note">
+          The guests depart. Any loan you secured now hangs in your galleries
+          — for a while.
+        </p>
+        <div className="divider" />
+        <button onClick={onClose}>Leave the Gala</button>
+      </div>
+    );
+  }
+
+  // --- the conversation mini-game ---------------------------
+  if (convo) {
+    const art = ARTIFACT_BY_ID[convo.targetId];
+    if (convo.finished) {
+      return (
+        <div className="panel">
+          <h2>{convo.guest.name}
+            <span className="sub">the conversation concludes</span></h2>
+          <p className="empty-note">{convo.lastText}</p>
+          <p className="empty-note">
+            You have made your case for {art.name}. Time to see how it landed.
+          </p>
+          <div className="divider" />
+          <button onClick={() => setOutcome(Gala.conversationOutcome(convo))}>
+            See Their Answer
+          </button>
+        </div>
+      );
+    }
+    return (
+      <div className="panel">
+        <h2>{convo.guest.name}
+          <span className="sub">
+            round {convo.round + 1} of {convo.totalRounds}
+          </span>
+        </h2>
+        <p className="empty-note">
+          {convo.guest.archetype.name} — {convo.guest.archetype.blurb}
+        </p>
+        <div className="convo-target">
+          Pursuing: <b>{art.name}</b> · {STYLES[art.style].name} ·{' '}
+          <RarityPill score={art.score} />
+        </div>
+        <div className="convo-reaction">{convo.lastText}</div>
+        <div className="divider" />
+        <div className="convo-options">
+          {convo.options.map((line, i) => (
+            <button key={i} className="convo-line"
+              onClick={() => setConvo(Gala.chooseLine(convo, line))}>
+              <span className="convo-tag">{Gala.TAG_LABEL[line.tag]}</span>
+              <span className="convo-text">"{line.text}"</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // --- inspecting one guest's collection --------------------
+  if (viewing) {
+    return (
+      <div className="panel">
+        <h2>{viewing.name}
+          <span className="sub">{viewing.archetype.name}</span></h2>
+        <p className="empty-note">{viewing.archetype.blurb}</p>
+        <div className="divider" />
+        <div className="filter-group-label">Their Collection — choose a target</div>
+        <p className="drag-hint">
+          Pick the work you will pursue. The conversation that follows
+          decides whether they part with it.
+        </p>
+        <div className="results-grid">
+          {viewing.collection.map(id => {
+            const art = ARTIFACT_BY_ID[id];
+            return (
+              <button key={id} className="gala-target"
+                onClick={() => setConvo(
+                  Gala.startConversation(viewing, id))}>
+                <ItemCard artifact={art} />
+                <span className="gala-pick">Pursue this work</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="divider" />
+        <button className="ghost" onClick={() => setViewing(null)}>
+          Back to the Guests
+        </button>
+      </div>
+    );
+  }
+
+  // --- the guest list ---------------------------------------
+  return (
+    <div className="panel">
+      <h2>The Gala<span className="sub">work the room</span></h2>
+      <p className="empty-note">
+        These guests each hold a collection. Approach one to inspect what
+        they own and choose a piece to pursue. You may only attempt one
+        guest — choose with care.
+      </p>
+      <div className="divider" />
+      {guests.map(g => (
+        <div className="row" key={g.id}>
+          <div className="meta">
+            <div className="name">{g.name}</div>
+            <div className="info">
+              {g.archetype.name} — owns {g.collection.length} notable work(s)
+            </div>
+          </div>
+          <button onClick={() => setViewing(g)}>Approach</button>
+        </div>
+      ))}
+      <div className="divider" />
+      <button className="ghost" onClick={onClose}>Leave the Gala</button>
+    </div>
+  );
+}
+
 
 /* ---- a small SVG line chart for the weekly history -------- */
 function WeekChart({
@@ -1882,11 +2482,9 @@ function BusinessTab({
   setState: (s: GameState) => void;
   apply: (r: { state: GameState; error?: string }) => void;
 }) {
-  const [priceInput, setPriceInput] = useState(String(state.ticket));
-  const sponsors = E.availableSponsors(state);
-  const building = BUILDINGS[state.buildingId];
-  const freeHalls = building.halls.filter(h => !state.wingNames[h.id]);
-  const [chosenHall, setChosenHall] = useState<string>(freeHalls[0]?.id || '');
+  const bizMuseum = E.activeMuseum(state);
+  const [priceInput, setPriceInput] = useState(String(bizMuseum.ticket));
+  const building = BUILDINGS[bizMuseum.buildingId];
 
   // a live preview of visitors/revenue at the typed price
   const preview = { ...state, ticket: parseInt(priceInput || '0', 10) };
@@ -1923,7 +2521,7 @@ function BusinessTab({
         </div>
         <div style={{ marginTop: 10 }}>
           <button
-            disabled={parseInt(priceInput || '0', 10) === state.ticket}
+            disabled={parseInt(priceInput || '0', 10) === bizMuseum.ticket}
             onClick={() => setState(E.setTicket(state, parseInt(priceInput || '0', 10)))}>
             Set Price
           </button>
@@ -1932,9 +2530,9 @@ function BusinessTab({
 
       <div className="panel">
         <h2>Advertising<span className="sub">draw a crowd</span></h2>
-        {state.adWeeksLeft > 0 ? (
+        {bizMuseum.adWeeksLeft > 0 ? (
           <p className="empty-note">
-            A campaign is running — {state.adWeeksLeft} week(s) left, visitors
+            A campaign is running — {bizMuseum.adWeeksLeft} week(s) left, visitors
             up ×{AD_CAMPAIGN.visitorMult}.
           </p>
         ) : (
@@ -1950,68 +2548,138 @@ function BusinessTab({
         )}
       </div>
 
-      <div className="panel">
-        <h2>Sponsors<span className="sub">patrons &amp; wing names</span></h2>
-        {state.sponsors.length > 0 && (
-          <>
-            {state.sponsors.map(sp => (
-              <div className="row" key={sp.id}>
-                <div className="meta">
-                  <div className="name">{sp.name}</div>
-                  <div className="info">
-                    +{sp.weeklyBonus} fame/week
-                    {sp.wingNamed
-                      ? ` · names the ${building.halls.find(h => h.id === sp.wingNamed)?.name || 'a wing'}`
-                      : ''}
-                  </div>
-                </div>
-              </div>
-            ))}
-            <div className="divider" />
-          </>
-        )}
-        {sponsors.length === 0 ? (
-          <p className="empty-note">
-            No new patrons are interested yet — grow your fame to attract them.
-          </p>
-        ) : freeHalls.length === 0 ? (
-          <p className="empty-note">
-            Patrons are interested, but every wing is already named. A larger
-            building would offer new wings.
-          </p>
-        ) : (
-          <>
-            <p className="empty-note">
-              A sponsor gives a one-off gift and recurring fame; in return, a
-              wing is named for them.
-            </p>
-            <div className="opt-row">
-              {freeHalls.map(h => (
-                <div key={h.id}
-                  className={'opt' + (chosenHall === h.id ? ' active' : '')}
-                  onClick={() => setChosenHall(h.id)}>
-                  {h.name}
-                </div>
-              ))}
-            </div>
-            {sponsors.map(sp => (
-              <div className="row" key={sp.id}>
-                <div className="meta">
-                  <div className="name">{sp.name}</div>
-                  <div className="info">
-                    Gift {money(sp.gift)} · +{sp.weeklyBonus} fame/week
-                  </div>
-                </div>
-                <button disabled={!chosenHall}
-                  onClick={() => apply(E.courtSponsor(state, sp.id, chosenHall))}>
-                  Court
-                </button>
-              </div>
-            ))}
-          </>
-        )}
-      </div>
+      <SponsorsPanel state={state} apply={apply} museum={bizMuseum}
+        building={building} />
     </>
+  );
+}
+
+/* the Sponsors panel — court term-based building & wing sponsors */
+function SponsorsPanel({
+  state, apply, museum, building,
+}: {
+  state: GameState;
+  apply: (r: { state: GameState; error?: string }) => void;
+  museum: ReturnType<typeof E.activeMuseum>;
+  building: typeof BUILDINGS[string];
+}) {
+  const [scope, setScope] = useState<'building' | 'wing'>('building');
+  const [hallId, setHallId] = useState<string>(building.halls[0]?.id || '');
+  const [term, setTerm] = useState<number>(52);
+  const [firm, setFirm] = useState<string>('');
+
+  const firms = E.availableFirms(state, museum.id);
+  const chk = E.canSponsor(state, museum.id, scope,
+    scope === 'wing' ? hallId : null);
+  const pay = E.sponsorWeeklyPay(state, museum.id, scope, term);
+  const total = pay * term;
+
+  return (
+    <div className="panel">
+      <h2>Sponsors<span className="sub">patrons of {museum.name}</span></h2>
+
+      {museum.sponsors.length > 0 && (
+        <>
+          <div className="filter-group-label">Current Sponsors</div>
+          {museum.sponsors.map(sp => (
+            <div className="row" key={sp.id}>
+              <div className="meta">
+                <div className="name">{sp.name}</div>
+                <div className="info">
+                  {sp.scope === 'building'
+                    ? 'Sponsors the building'
+                    : `Sponsors the ${museum.wingNames[sp.hallId || ''] 
+                        || building.halls.find(h => h.id === sp.hallId)?.name 
+                        || 'wing'}`}
+                  {' · '}{money(sp.weeklyPay)}/week · {sp.weeksLeft} week(s) left
+                </div>
+              </div>
+            </div>
+          ))}
+          <div className="divider" />
+        </>
+      )}
+
+      <div className="filter-group-label">Court a Sponsor</div>
+      <p className="empty-note">
+        A sponsor backs your building or a wing for a fixed term, paying
+        weekly. The richer your museum's fame and quality, the better the
+        offer. The space bears the sponsor's name until the term ends.
+      </p>
+
+      {firms.length === 0 ? (
+        <p className="empty-note">
+          Every sponsor firm is already backing this museum.
+        </p>
+      ) : (
+        <>
+          <div className="filter-group-label">What to sponsor</div>
+          <div className="filter-bar">
+            <span className={'filter-chip' + (scope === 'building' ? ' active' : '')}
+              onClick={() => setScope('building')}>
+              The Building
+            </span>
+            <span className={'filter-chip' + (scope === 'wing' ? ' active' : '')}
+              onClick={() => setScope('wing')}>
+              A Wing
+            </span>
+          </div>
+
+          {scope === 'wing' && (
+            <>
+              <div className="filter-group-label">Which wing</div>
+              <div className="filter-bar">
+                {building.halls.map(h => (
+                  <span key={h.id}
+                    className={'filter-chip' + (hallId === h.id ? ' active' : '')}
+                    onClick={() => setHallId(h.id)}>
+                    {museum.wingNames[h.id] || h.name}
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
+
+          <div className="filter-group-label">Term</div>
+          <div className="filter-bar">
+            <span className={'filter-chip' + (term === 26 ? ' active' : '')}
+              onClick={() => setTerm(26)}>26 weeks</span>
+            <span className={'filter-chip' + (term === 52 ? ' active' : '')}
+              onClick={() => setTerm(52)}>52 weeks</span>
+          </div>
+
+          <div className="filter-group-label">Sponsor firm</div>
+          <div className="filter-bar">
+            {firms.map(f => (
+              <span key={f}
+                className={'filter-chip' + (firm === f ? ' active' : '')}
+                onClick={() => setFirm(f)}>
+                {f}
+              </span>
+            ))}
+          </div>
+
+          <p className="empty-note">
+            {firm
+              ? `${firm} would pay ${money(pay)}/week for ${term} weeks — `
+                + `${money(total)} in total.`
+              : `A ${term}-week deal at this museum's standing pays `
+                + `${money(pay)}/week (${money(total)} total). Choose a firm.`}
+          </p>
+          {!chk.ok && (
+            <p className="empty-note" style={{ color: 'var(--rare-icon)' }}>
+              {chk.reason}
+            </p>
+          )}
+          <div className="divider" />
+          <button disabled={!firm || !chk.ok}
+            onClick={() => apply(E.courtSponsor(state, museum.id, scope,
+              scope === 'wing' ? hallId : null, term, firm))}>
+            Sign {firm || 'Sponsor'} · {money(total)} over {term} wks
+          </button>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -2031,11 +2699,29 @@ function CompetitorsTab({ state }: { state: GameState }) {
   // build the rankable list. `visitors` here is AVERAGE DAILY —
   // the player's true daily draw, and the static/rival weekly
   // figures divided down to a daily average.
-  const you: RankRec = {
-    id: 'you', name: state.galleryName, sub: 'Your museum — Your City',
-    fame: state.fame, quality: E.museumQuality(state),
-    visitors: Math.round(E.dailyVisitors(state)), you: true,
+  // each of the player's open museums ranks on its own; a
+  // combined "all museums" entry shows the player's total reach.
+  const museumRecs: RankRec[] = E.openMuseums(state).map(m => ({
+    id: 'you-' + m.id,
+    name: m.name,
+    sub: `Your museum · ${BUILDINGS[m.buildingId].name}`,
+    fame: m.fame,
+    quality: E.museumQuality(state, m.id),
+    visitors: Math.round(E.dailyVisitors(state, m)),
+    you: true,
+  }));
+  const combined: RankRec = {
+    id: 'you-total', name: state.galleryName + ' (all museums)',
+    sub: 'Your combined reach',
+    fame: E.totalFame(state),
+    quality: E.openMuseums(state).reduce(
+      (a, m) => a + E.museumQuality(state, m.id), 0),
+    visitors: Math.round(E.openMuseums(state).reduce(
+      (a, m) => a + E.dailyVisitors(state, m), 0)), you: true,
   };
+  // the combined entry only matters when there are several museums
+  const youRecs: RankRec[] = E.openMuseums(state).length > 1
+    ? [combined, ...museumRecs] : museumRecs;
   const rivalRecs: RankRec[] = state.rivals.map(r => ({
     id: r.id, name: r.name, sub: 'Rival curator — Your City',
     fame: r.fame, quality: r.quality, visitors: Math.round(r.visitors / 7),
@@ -2048,9 +2734,11 @@ function CompetitorsTab({ state }: { state: GameState }) {
       fame: m.fame, quality: m.quality, visitors: Math.round(m.visitors / 7),
     }));
 
-  const all = [you, ...rivalRecs, ...staticRecs];
+  const all = [...youRecs, ...rivalRecs, ...staticRecs];
   all.sort((a, b) => b[metric] - a[metric]);
-  const myPos = all.findIndex(r => r.you) + 1;
+  // "your position" is your best-ranked museum (ignoring the
+  // combined-total row, which isn't a real competing museum)
+  const myPos = all.findIndex(r => r.you && r.id !== 'you-total') + 1;
   const metricLabel = metric === 'visitors' ? 'daily visitors' : metric;
 
   return (

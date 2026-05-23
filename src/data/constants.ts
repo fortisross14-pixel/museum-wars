@@ -54,6 +54,7 @@ export const typeIcon = (t: ArtType) => TYPE_ICON[t] || '◆';
 /* --- buildings --------------------------------------------- */
 export const ROOM_CAPACITY = 5;
 export const BUILDINGS: Record<string, BuildingDef> = {
+  /* --- Historic District: where a museum begins ----------- */
   local: {
     id: 'local', name: 'Local Gallery',
     blurb: 'A rented room in a small city. A beginning.',
@@ -62,25 +63,93 @@ export const BUILDINGS: Record<string, BuildingDef> = {
   },
   town: {
     id: 'town', name: 'Town Museum',
-    blurb: 'A civic museum across two halls.',
+    blurb: 'A civic museum across two halls — room to grow.',
     prestige: 1.25, moveCost: 22000, maintenance: 8000,
     halls: [
-      { id: 'east', name: 'East Hall', roomCap: 3, startRooms: 2 },
-      { id: 'west', name: 'West Hall', roomCap: 3, startRooms: 1 },
+      { id: 'east', name: 'East Hall', roomCap: 4, startRooms: 1 },
+      { id: 'west', name: 'West Hall', roomCap: 3, startRooms: 0 },
     ],
   },
+  /* --- Art District: prestige addresses ------------------- */
   palace: {
     id: 'palace', name: 'Historic Palace',
-    blurb: 'A grand palace of three wings.',
-    prestige: 1.5, moveCost: 140000, maintenance: 40000,
+    blurb: 'A grand palace of five wings — the address of a great museum.',
+    prestige: 1.6, moveCost: 220000, maintenance: 46000,
     halls: [
-      { id: 'north', name: 'North Wing', roomCap: 3, startRooms: 2 },
-      { id: 'south', name: 'South Wing', roomCap: 3, startRooms: 2 },
-      { id: 'grand', name: 'Grand Wing', roomCap: 3, startRooms: 1 },
+      { id: 'north', name: 'North Wing', roomCap: 5, startRooms: 1 },
+      { id: 'south', name: 'South Wing', roomCap: 5, startRooms: 0 },
+      { id: 'east',  name: 'East Wing',  roomCap: 5, startRooms: 0 },
+      { id: 'west',  name: 'West Wing',  roomCap: 5, startRooms: 0 },
+      { id: 'grand', name: 'Grand Wing', roomCap: 5, startRooms: 0 },
+    ],
+  },
+  salon: {
+    id: 'salon', name: 'The Beaux-Arts Salon',
+    blurb: 'An elegant exhibition house — modest, but a fine pedigree.',
+    prestige: 1.4, moveCost: 95000, maintenance: 19000,
+    halls: [
+      { id: 'upper', name: 'Upper Salon', roomCap: 4, startRooms: 1 },
+      { id: 'lower', name: 'Lower Salon', roomCap: 4, startRooms: 0 },
+    ],
+  },
+  /* --- College District: teaching museums ----------------- */
+  college: {
+    id: 'college', name: 'University Museum',
+    blurb: 'A teaching museum on campus — busy halls, young crowds.',
+    prestige: 1.2, moveCost: 40000, maintenance: 11000,
+    halls: [
+      { id: 'first',  name: 'First Floor',  roomCap: 4, startRooms: 1 },
+      { id: 'second', name: 'Second Floor', roomCap: 4, startRooms: 0 },
+      { id: 'third',  name: 'Third Floor',  roomCap: 3, startRooms: 0 },
+    ],
+  },
+  /* --- Bohemian Neighborhood: artist quarters ------------- */
+  loft: {
+    id: 'loft', name: 'The Artists\u2019 Loft',
+    blurb: 'A converted studio block — raw character, low overhead.',
+    prestige: 1.15, moveCost: 30000, maintenance: 6500,
+    halls: [
+      { id: 'main', name: 'Loft Floor', roomCap: 5, startRooms: 1 },
+    ],
+  },
+  /* --- Downtown: commercial heart ------------------------- */
+  tower: {
+    id: 'tower', name: 'The Gallery Tower',
+    blurb: 'A high-rise museum — many floors, steep rent, vast footfall.',
+    prestige: 1.45, moveCost: 130000, maintenance: 33000,
+    halls: [
+      { id: 'f2', name: 'Second Floor', roomCap: 3, startRooms: 1 },
+      { id: 'f3', name: 'Third Floor',  roomCap: 3, startRooms: 0 },
+      { id: 'f4', name: 'Fourth Floor', roomCap: 3, startRooms: 0 },
+      { id: 'f5', name: 'Fifth Floor',  roomCap: 3, startRooms: 0 },
+    ],
+  },
+  /* --- Park District: green, quiet pavilions -------------- */
+  pavilion: {
+    id: 'pavilion', name: 'The Park Pavilion',
+    blurb: 'A glass pavilion among the gardens — calm, and a gentle upkeep.',
+    prestige: 1.3, moveCost: 60000, maintenance: 13000,
+    halls: [
+      { id: 'glass', name: 'Glass Hall', roomCap: 4, startRooms: 1 },
+      { id: 'garden', name: 'Garden Hall', roomCap: 4, startRooms: 0 },
+    ],
+  },
+  /* --- Waterfront: docks and warehouses ------------------- */
+  warehouse: {
+    id: 'warehouse', name: 'The Dockside Warehouse',
+    blurb: 'A cavernous old warehouse on the water — cheap space, lots of it.',
+    prestige: 1.2, moveCost: 70000, maintenance: 12000,
+    halls: [
+      { id: 'hold', name: 'The Hold',    roomCap: 5, startRooms: 1 },
+      { id: 'wharf', name: 'Wharf Hall', roomCap: 5, startRooms: 0 },
+      { id: 'pier',  name: 'Pier Hall',  roomCap: 4, startRooms: 0 },
     ],
   },
 };
-export const BUILDING_ORDER = ['local', 'town', 'palace'];
+export const BUILDING_ORDER = [
+  'local', 'loft', 'town', 'college', 'pavilion', 'warehouse',
+  'salon', 'tower', 'palace',
+];
 
 /* --- districts (7) ----------------------------------------- */
 export const DISTRICTS: DistrictDef[] = [
@@ -89,22 +158,22 @@ export const DISTRICTS: DistrictDef[] = [
     accent: '#b9892f', pos: { x: 82, y: 70 }, buildingIds: ['local', 'town'] },
   { id: 'art', name: 'Art District',
     blurb: 'Grand institutions and collectors. The address of a great museum.',
-    accent: '#8b3a2f', pos: { x: 83, y: 20 }, buildingIds: ['palace'] },
+    accent: '#8b3a2f', pos: { x: 83, y: 20 }, buildingIds: ['salon', 'palace'] },
   { id: 'college', name: 'College District',
-    blurb: 'Universities and young crowds. No venues here yet.',
-    accent: '#3f6694', pos: { x: 18, y: 17 }, buildingIds: [] },
+    blurb: 'Universities and young crowds — busy, affordable halls.',
+    accent: '#3f6694', pos: { x: 18, y: 17 }, buildingIds: ['college'] },
   { id: 'bohemian', name: 'Bohemian Neighborhood',
-    blurb: 'Artists and studios. No venues here yet.',
-    accent: '#6b4a8a', pos: { x: 49, y: 17 }, buildingIds: [] },
+    blurb: 'Artists and studios — raw spaces with real character.',
+    accent: '#6b4a8a', pos: { x: 49, y: 17 }, buildingIds: ['loft'] },
   { id: 'downtown', name: 'Downtown',
-    blurb: 'The commercial heart of the city. No venues here yet.',
-    accent: '#3a352c', pos: { x: 47, y: 55 }, buildingIds: [] },
+    blurb: 'The commercial heart of the city — high-rise galleries, high rent.',
+    accent: '#3a352c', pos: { x: 47, y: 55 }, buildingIds: ['tower'] },
   { id: 'park', name: 'Park District',
-    blurb: 'Green space and quiet. No venues here yet.',
-    accent: '#4a6149', pos: { x: 13, y: 66 }, buildingIds: [] },
+    blurb: 'Green space and quiet — a pavilion among the gardens.',
+    accent: '#4a6149', pos: { x: 13, y: 66 }, buildingIds: ['pavilion'] },
   { id: 'waterfront', name: 'Waterfront',
-    blurb: 'Docks and open water. No venues here yet.',
-    accent: '#2f4a55', pos: { x: 50, y: 86 }, buildingIds: [] },
+    blurb: 'Docks and open water — vast warehouse space for little rent.',
+    accent: '#2f4a55', pos: { x: 50, y: 86 }, buildingIds: ['warehouse'] },
 ];
 export function districtOfBuilding(buildingId: string): DistrictDef | null {
   return DISTRICTS.find(d => d.buildingIds.includes(buildingId)) || null;
@@ -172,51 +241,77 @@ export const AUCTION_HOUSES: AuctionHouseDef[] = [
 ];
 
 /* --- the three rival players' names ------------------------ */
+/* the player's cousins — fellow grandchildren who each inherit one
+   of the grandparent's heirloom works and become rival curators. */
 export const RIVAL_NAMES = [
-  'The Thorncrest Collection',
-  'Adler & Voss Gallery',
-  'The Marchetti Museum',
+  'Cousin Marchetti',
+  'Cousin Adler',
+  'Cousin Thorne',
 ];
 
 /* --- expeditions ------------------------------------------- */
-/* Each kind is flavour over the same mechanics. An expedition runs
-   4 weeks, has a 50% chance of an "incident" en route, and the
-   BUDGET sets the rarity of what is found (see expeditionOdds in
-   the engine). `typeMul` nudges how many items a kind tends to
-   bring home. */
-export interface ExpeditionKindDef {
-  id: string;
+/* Four tiers. The player picks a tier; it sets the cost and the
+   board the dig mini-game lays out. Common/Uncommon boards yield
+   whole objects; Rare/Epic boards yield shards, banked toward a
+   summon. An expedition runs EXPEDITION_WEEKS before it can be
+   played out. */
+export interface ExpeditionTierDef {
+  id: 'common' | 'uncommon' | 'rare' | 'epic';
   name: string;
   blurb: string;
-  minBudget: number;
+  cost: number;
+  gridSize: number;        // NxN board
+  digs: number;            // tiles the player may reveal
+  bombs: number;           // "lose everything" tiles on the board
+  bombTolerance: number;   // bombs you may hit before ejection
+  artifacts: number;       // whole objects hidden on the board (0 = shards only)
+  shardTiles: number;      // shard caches on the board
+  yieldsObjects: boolean;  // true: find whole works; false: shards only
 }
-export const EXPEDITION_KINDS: ExpeditionKindDef[] = [
+
+export const EXPEDITION_TIERS: ExpeditionTierDef[] = [
   {
-    id: 'antiques', name: 'Antiques Market',
-    blurb: 'Comb the stalls and back rooms of a great antiques market.',
-    minBudget: 5000,
+    id: 'common', name: 'Common Expedition',
+    blurb: 'A short, well-trodden dig. Low cost, low risk — you should '
+      + 'come home with a Common work or two.',
+    cost: 10000,
+    gridSize: 5, digs: 9, bombs: 2, bombTolerance: 2,
+    artifacts: 2, shardTiles: 4, yieldsObjects: true,
   },
   {
-    id: 'dig', name: 'Archaeological Site',
-    blurb: 'Fund a dig at a promising, half-explored ancient site.',
-    minBudget: 12000,
+    id: 'uncommon', name: 'Uncommon Expedition',
+    blurb: 'A harder site. Costlier, and the board is tighter — at most '
+      + 'one Uncommon work, and not every run finds it.',
+    cost: 25000,
+    gridSize: 5, digs: 8, bombs: 2, bombTolerance: 2,
+    artifacts: 1, shardTiles: 5, yieldsObjects: true,
   },
   {
-    id: 'estate', name: 'Private Estate Sale',
-    blurb: 'Negotiate access to the holdings of a fading old family.',
-    minBudget: 8000,
+    id: 'rare', name: 'Rare Expedition',
+    blurb: 'Dangerous ground. A single wrong dig ends the run. No whole '
+      + 'works — you bank Rare shards toward a summon.',
+    cost: 50000,
+    gridSize: 6, digs: 10, bombs: 3, bombTolerance: 1,
+    artifacts: 0, shardTiles: 8, yieldsObjects: false,
   },
   {
-    id: 'frontier', name: 'Frontier Expedition',
-    blurb: 'Mount a long expedition into remote, unmapped country.',
-    minBudget: 20000,
+    id: 'epic', name: 'Epic Expedition',
+    blurb: 'Treacherous and costly. Four ways to lose everything, and one '
+      + 'is enough. You bank Epic shards toward a summon.',
+    cost: 100000,
+    gridSize: 6, digs: 11, bombs: 4, bombTolerance: 1,
+    artifacts: 0, shardTiles: 10, yieldsObjects: false,
   },
 ];
 
-/* expedition runs this many weeks before its result */
+/* shards needed to summon a work of the given rarity, in a style */
+export const SUMMON_COST: Record<'rare' | 'epic', number> = {
+  rare: 30,
+  epic: 50,
+};
+
+/* expedition runs this many weeks before it can be played out */
 export const EXPEDITION_WEEKS = 4;
-/* chance of an incident en route (reduces the find) */
-export const EXPEDITION_INCIDENT_CHANCE = 0.5;
 
 /* ============================================================
    STATIC COMPETITOR MUSEUMS
