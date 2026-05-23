@@ -123,7 +123,7 @@ export const AD_CAMPAIGN = { cost: 700, weeks: 4, visitorMult: 1.4 };
 
 export const START = {
   funds: 50000,
-  roomCost: 600,
+  roomCost: 20000,
   eventChancePerSpecialty: 0.5,
   maxEventsPerWeek: 3,
   defaultTicket: 8,            // starting ticket price

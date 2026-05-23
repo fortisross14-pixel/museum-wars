@@ -112,12 +112,15 @@ export interface AuctionState {
   leader: 'house' | 'player' | 'rival';
   rivalCeiling: number;
   increment: number;
-  mode: 'counting' | 'announcing';
-  clockMs: number;
-  announceMs: number;
+  // intro     — paused, awaiting the player's "Begin Auction"
+  // announcing— a bid is being announced (held announceMs)
+  // counting  — sitting on a countdown number (held stepMs)
+  mode: 'intro' | 'announcing' | 'counting';
+  count: number;          // the countdown number currently shown (3,2,1)
+  phaseMs: number;        // ms remaining in the current step/announce
   elapsedMs: number;
+  rivalNextGap: number;   // ms of counting before the rival may bid
   sinceCountStart: number;
-  rivalNextGap: number;
   over: boolean;
   won: boolean | null;
   message: string;

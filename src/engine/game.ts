@@ -919,8 +919,16 @@ export function computeRevenue(s: GameState): number {
 }
 
 /** weekly expenses = building maintenance + staff wages */
+/** weekly expenses = building maintenance + staff wages + a small
+ *  per-room variable cost. Most upkeep (security, front office) is
+ *  fixed in the building's maintenance figure; opening extra rooms
+ *  only adds the variable part — electricity, cleaning — so each
+ *  unlocked room beyond the first adds a modest surcharge. */
 export function computeExpenses(s: GameState): number {
-  return BUILDINGS[s.buildingId].maintenance + weeklyWages(s);
+  const roomsOpen = s.rooms.filter(r => r.unlocked).length;
+  const variablePerRoom = 120;        // electricity, cleaning, upkeep
+  const roomSurcharge = Math.max(0, roomsOpen - 1) * variablePerRoom;
+  return BUILDINGS[s.buildingId].maintenance + weeklyWages(s) + roomSurcharge;
 }
 
 /* --- rankings ---------------------------------------------- */

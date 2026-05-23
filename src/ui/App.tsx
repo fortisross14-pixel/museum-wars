@@ -147,11 +147,13 @@ function Game({
   /* --- auction tick loop ----------------------------------- */
   const lastRef = useRef<number>(0);
   useEffect(() => {
-    if (!state.auction || state.auction.over) return;
+    // frozen during the intro pause and once the lot is over
+    if (!state.auction || state.auction.over
+        || state.auction.mode === 'intro') return;
     lastRef.current = performance.now();
     const handle = window.setInterval(() => {
       setRawState(s => {
-        if (!s.auction || s.auction.over) return s;
+        if (!s.auction || s.auction.over || s.auction.mode === 'intro') return s;
         const now = performance.now();
         const delta = now - lastRef.current;
         lastRef.current = now;
@@ -159,7 +161,7 @@ function Game({
       });
     }, 100);
     return () => window.clearInterval(handle);
-  }, [state.auction?.over, state.auction?.artifactId]);
+  }, [state.auction?.over, state.auction?.artifactId, state.auction?.mode]);
   // when an auction resolves, persist once
   useEffect(() => {
     if (state.auction?.over) Saves.saveSlot(slot, state);
@@ -1021,7 +1023,12 @@ function EventInterior({
   if (!a) return null;
   const art = ARTIFACT_BY_ID[ev.lotIds[ev.lotIndex || 0]];
   const isLast = (ev.lotIndex || 0) >= ev.lotIds.length - 1;
+  const myNext = a.currentBid + a.increment;
+  const lotNum = Math.min((ev.lotIndex || 0) + 1, ev.lotIds.length);
 
+  const onBegin = () => {
+    setState({ ...state, auction: Auc.beginAuction(a) });
+  };
   const onBid = () => {
     const res = Auc.playerBid(state);
     if (res.error) { flash(res.error); return; }
@@ -1036,22 +1043,29 @@ function EventInterior({
           after.activeEvent!.lotIds[after.activeEvent!.lotIndex!]),
       });
     } else {
-      setState(after);
+      setState({ ...after, auction: null });
     }
   };
 
-  const clockText = a.mode === 'announcing' ? '— • —'
-    : (Math.max(0, a.clockMs) / 1000).toFixed(1) + 's';
-  const clockCls = 'au-clock'
-    + (a.mode === 'announcing' ? ' frozen' : a.clockMs <= 1000 ? ' urgent' : '');
-  const myNext = a.currentBid + a.increment;
+  // can the player bid right now? (allowed in announcing + counting,
+  // never in intro, never when already leading or beyond funds)
+  const canBid = !a.over && a.mode !== 'intro'
+    && a.leader !== 'player' && myNext <= state.funds;
+  const bidLabel = a.leader === 'player' ? 'You lead'
+    : myNext > state.funds ? 'Beyond funds'
+    : `Bid ${money(myNext)}`;
+
+  // the big centre display: intro / a count number / SOLD
+  let display: React.ReactNode;
+  if (a.mode === 'intro') display = <span className="au-ready">Ready</span>;
+  else if (a.over) display = <span className="au-sold">SOLD</span>;
+  else if (a.mode === 'announcing') display = <span className="au-dash">— —</span>;
+  else display = <span className="au-count">{a.count}</span>;
 
   return (
     <div className="panel auction-stage">
       <h2>{ev.house}
-        <span className="sub">
-          lot {Math.min((ev.lotIndex || 0) + 1, ev.lotIds.length)} of {ev.lotIds.length}
-        </span>
+        <span className="sub">lot {lotNum} of {ev.lotIds.length}</span>
       </h2>
       <div className="lot-tracker">Lots won so far: {ev.acquired?.length || 0}</div>
       <div className="auction-art">
@@ -1066,37 +1080,53 @@ function EventInterior({
         <div><RarityPill score={art.score} /></div>
       </div>
       <div className="divider" />
-      <div className={clockCls}>{clockText}</div>
-      <div className="bid-line">
-        {a.leader === 'player' ? 'You hold the leading bid'
-          : a.leader === 'rival' ? 'A rival holds the leading bid'
-          : 'The floor is open'}
-      </div>
-      <div className="bid-readout">{money(a.currentBid)}</div>
-      <div className="rival-tag">{a.message}</div>
-      <div className="bid-controls">
-        {!a.over ? (
-          <>
-            <button
-              disabled={a.mode === 'announcing' || a.leader === 'player'
-                || myNext > state.funds}
-              onClick={onBid}>
-              {a.leader === 'player' ? 'You lead'
-                : myNext > state.funds ? 'Beyond your funds'
-                : `Bid ${money(myNext)}`}
-            </button>
-            <button className="ghost"
+
+      {a.mode === 'intro' ? (
+        /* paused — present the lot, wait for Begin */
+        <>
+          <div className="au-stage-msg">{a.message}</div>
+          <div className="bid-readout">opening at {money(a.currentBid)}</div>
+          <button className="primary big au-begin" onClick={onBegin}>
+            Begin Auction
+          </button>
+        </>
+      ) : (
+        <>
+          <div className={'au-clock' + (a.over ? ' done' : '')}>{display}</div>
+          <div className="bid-line">
+            {a.leader === 'player' ? 'You hold the leading bid'
+              : a.leader === 'rival' ? 'A rival holds the leading bid'
+              : 'The floor is open'}
+          </div>
+          <div className="bid-readout">{money(a.currentBid)}</div>
+          <div className="rival-tag">{a.message}</div>
+
+          {/* bid controls — FIXED positions; they grey out, never move */}
+          <div className="bid-controls">
+            <button disabled={!canBid} onClick={onBid}>{bidLabel}</button>
+            <button className="ghost" disabled={a.over}
               onClick={() => setState(E.passLot(state))}>
               Pass this lot
             </button>
-          </>
-        ) : (
-          <button onClick={onContinue}>
-            {a.won ? 'Claim & Continue' : (isLast ? 'See Results' : 'Next Lot')}
-          </button>
-        )}
-      </div>
-      <div style={{ marginTop: 8, textAlign: 'center' }}>
+          </div>
+
+          {/* the lot-sold pause: continue only appears once over */}
+          {a.over && (
+            <div className="au-sold-bar">
+              <div className="au-sold-line">
+                {a.won
+                  ? `You won ${art.name}.`
+                  : `${art.name} went to ${a.leader === 'rival' ? 'a rival' : 'no one'}.`}
+              </div>
+              <button className="primary" onClick={onContinue}>
+                {isLast ? 'See Results' : 'Next Lot →'}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      <div style={{ marginTop: 10, textAlign: 'center' }}>
         <button className="ghost small"
           onClick={() => setState(E.leaveAuction(state))}>
           Leave the auction
@@ -1351,14 +1381,35 @@ function ExpeditionGame({
 }) {
   const found = expedition.foundIds;
 
-  // build the shuffled deck once: two cards per found work
+  // build the shuffled 12-card deck once. The expedition's single
+  // find is one true PAIR; the other ten cards are decoys with
+  // unique initials and no match — pure distraction. Match the real
+  // pair within three attempts and the work is yours.
   const [deck] = useState<GameCard[]>(() => {
+    const GRID = 12;
     const cards: GameCard[] = [];
-    found.forEach((artId, i) => {
-      const initials = initialsOf(ARTIFACT_BY_ID[artId].name);
-      cards.push({ cardId: i * 2, artId, initials });
-      cards.push({ cardId: i * 2 + 1, artId, initials });
-    });
+    let cid = 0;
+    // the real pair — the first found work
+    const realArt = found[0];
+    if (realArt) {
+      const ini = initialsOf(ARTIFACT_BY_ID[realArt].name);
+      cards.push({ cardId: cid++, artId: realArt, initials: ini });
+      cards.push({ cardId: cid++, artId: realArt, initials: ini });
+    }
+    // decoys — fill the rest of the grid with unmatched cards
+    const decoyInitials = [
+      'AR', 'BC', 'DL', 'EM', 'FN', 'GP', 'HS', 'JT', 'KV', 'LW',
+      'MX', 'NZ', 'OQ', 'RB', 'SD',
+    ];
+    let di = 0;
+    while (cards.length < GRID) {
+      cards.push({
+        cardId: cid++,
+        artId: '__decoy' + di,            // no real artifact — never matches
+        initials: decoyInitials[di % decoyInitials.length],
+      });
+      di++;
+    }
     // Fisher-Yates shuffle
     for (let i = cards.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
@@ -1366,6 +1417,8 @@ function ExpeditionGame({
     }
     return cards;
   });
+
+  const realArtId = found[0] || null;
 
   type Phase = 'intro' | 'revealing' | 'playing' | 'done';
   const [phase, setPhase] = useState<Phase>('intro');
@@ -1376,7 +1429,7 @@ function ExpeditionGame({
   const [pick, setPick] = useState<number[]>([]);          // current 1-2 picks
   const [busy, setBusy] = useState(false);
 
-  // the one-time 3-second reveal
+  // the one-time 3-second reveal of all twelve cards
   const doReveal = () => {
     setPhase('revealing');
     setFlipped(deck.map(c => c.cardId));
@@ -1395,19 +1448,21 @@ function ExpeditionGame({
     if (nextPick.length === 2) {
       setBusy(true);
       const [a, b] = nextPick.map(id => deck.find(c => c.cardId === id)!);
-      const isMatch = a.artId === b.artId;
+      // a match only counts for a REAL artifact (decoys never match)
+      const isMatch = a.artId === b.artId && !a.artId.startsWith('__decoy');
       window.setTimeout(() => {
+        let won = false;
         if (isMatch) {
           setMatchedArt(m => [...m, a.artId]);
           setMatchedCards(m => [...m, a.cardId, b.cardId]);
+          won = true;
         }
         const left = attemptsLeft - 1;
         setAttemptsLeft(left);
         setPick([]);
         setBusy(false);
-        // game ends when attempts run out or every pair is found
-        const pairsLeft = found.length - (matchedArt.length + (isMatch ? 1 : 0));
-        if (left <= 0 || pairsLeft <= 0) setPhase('done');
+        // the game ends when the real pair is found, or attempts run out
+        if (won || left <= 0) setPhase('done');
       }, 900);
     }
   };
@@ -1421,14 +1476,15 @@ function ExpeditionGame({
     return (
       <div className="panel">
         <h2>The Expedition Returns
-          <span className="sub">recover what you can</span></h2>
+          <span className="sub">recover the find</span></h2>
         <p className="empty-note">
-          Your team brought back {found.length} work(s) — but the crates are
-          unlabelled. Study the cards: each work appears twice. You will see
-          every card for three seconds, once. Then you have three attempts to
-          match a pair. Each pair you match is yours to keep.
+          Your team brought back a single crated work — but it is hidden
+          among twelve unmarked cards. Two of them are a matching pair; the
+          rest are decoys. You will see every card for three seconds, once.
+          Then you have three attempts to turn over the matching pair and
+          claim the find.
           {expedition.incident
-            && ' The expedition met trouble, so the haul is already slim — match carefully.'}
+            && ' The expedition met trouble along the way — but the haul made it home.'}
         </p>
         <div className="divider" />
         <button onClick={doReveal}>Reveal the Cards</button>
@@ -1441,17 +1497,19 @@ function ExpeditionGame({
     return (
       <div className="panel">
         <h2>Expedition Concluded
-          <span className="sub">{matchedArt.length} work(s) recovered</span></h2>
+          <span className="sub">
+            {matchedArt.length > 0 ? 'the find is yours' : 'the find was lost'}
+          </span></h2>
         {matchedArt.length === 0 ? (
           <p className="empty-note">
-            No pairs were matched — the unclaimed crates were lost in the
-            confusion. A hard lesson.
+            The matching pair eluded you, and the crate was lost in the
+            confusion. A hard lesson — the expedition returns empty-handed.
           </p>
         ) : (
           <>
-            <h3 style={{ marginTop: 4 }}>New Items</h3>
+            <h3 style={{ marginTop: 4 }}>New Item</h3>
             <p className="drag-hint">
-              These works are now in your private collection.
+              This work is now in your private collection.
             </p>
             <div className="results-grid">
               {matchedArt.map(id =>
@@ -1468,7 +1526,7 @@ function ExpeditionGame({
   // --- revealing / playing ----------------------------------
   return (
     <div className="panel">
-      <h2>Match the Findings
+      <h2>Match the Find
         <span className="sub">
           {phase === 'revealing' ? 'study the cards'
             : `${attemptsLeft} attempt(s) left`}
@@ -1476,20 +1534,21 @@ function ExpeditionGame({
       </h2>
       <p className="drag-hint">
         {phase === 'revealing'
-          ? 'Memorise the pairs — the cards turn back in a moment.'
-          : 'Pick two cards with the same initials to claim that work.'}
+          ? 'Memorise the pair — the cards turn back in a moment.'
+          : 'Turn over the two cards with matching initials to claim the find.'}
       </p>
       <div className="memory-grid">
         {deck.map(card => {
           const up = faceUp(card.cardId);
-          const art = ARTIFACT_BY_ID[card.artId];
-          const band = rarityForScore(art.score);
           const isMatched = matchedCards.includes(card.cardId);
+          const isDecoy = card.artId.startsWith('__decoy');
+          const band = (!isDecoy && up)
+            ? rarityForScore(ARTIFACT_BY_ID[card.artId].score) : null;
           return (
             <button key={card.cardId}
               className={'memory-card' + (up ? ' up' : '')
                 + (isMatched ? ' matched' : '')}
-              style={up ? { ['--rar' as string]: band.hex } : undefined}
+              style={band ? { ['--rar' as string]: band.hex } : undefined}
               disabled={phase !== 'playing' || isMatched}
               onClick={() => onCardClick(card)}>
               {up ? card.initials : '?'}
@@ -1497,9 +1556,9 @@ function ExpeditionGame({
           );
         })}
       </div>
-      {matchedArt.length > 0 && (
+      {realArtId && matchedArt.length > 0 && (
         <p className="empty-note" style={{ marginTop: 10 }}>
-          Recovered so far: {matchedArt.map(id => ARTIFACT_BY_ID[id].name).join(', ')}.
+          Recovered: {ARTIFACT_BY_ID[realArtId].name}.
         </p>
       )}
     </div>

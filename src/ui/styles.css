@@ -220,17 +220,54 @@ button.primary:hover:not(:disabled), .next-week-btn:hover:not(:disabled) {
 
 .auction-stage { text-align: center; }
 .auction-art { display: flex; flex-direction: column; align-items: center; gap: 7px; }
+/* the big centre display — a held countdown number, Ready, or SOLD.
+   fixed height so nothing below it shifts as the content changes. */
 .au-clock {
-  font-family: 'Cormorant Garamond', serif; font-size: 50px; font-weight: 600;
-  color: var(--ink); line-height: 1.1; margin: 4px 0 2px;
-  font-variant-numeric: tabular-nums; transition: color 0.15s ease;
+  height: 76px; display: flex; align-items: center; justify-content: center;
+  margin: 4px 0 2px;
 }
-.au-clock.urgent { color: var(--crimson); }
-.au-clock.frozen { color: var(--brass); letter-spacing: 4px; }
+.au-count {
+  font-family: 'Cormorant Garamond', serif; font-size: 72px; font-weight: 700;
+  color: var(--ink); line-height: 1; font-variant-numeric: tabular-nums;
+}
+.au-dash {
+  font-family: 'Cormorant Garamond', serif; font-size: 44px;
+  color: var(--brass); letter-spacing: 6px;
+}
+.au-ready {
+  font-family: 'Cormorant Garamond', serif; font-size: 40px;
+  color: var(--ink-soft);
+}
+.au-sold {
+  font-family: 'Cormorant Garamond', serif; font-size: 56px; font-weight: 700;
+  color: var(--brass-dk); letter-spacing: 3px;
+}
 .bid-readout { font-family: 'Cormorant Garamond', serif; font-size: 38px; font-weight: 600; margin: 4px 0; }
 .bid-line { font-size: 13px; color: var(--ink-soft); }
-.rival-tag { font-size: 12px; color: var(--crimson); font-style: italic; min-height: 18px; }
-.bid-controls { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 12px; }
+.rival-tag { font-size: 12.5px; color: var(--crimson); font-style: italic; min-height: 20px; }
+/* bid controls — FIXED layout. Both buttons always present, fixed
+   width; they enable/disable in place and never move or reflow. */
+.bid-controls {
+  display: flex; gap: 10px; justify-content: center;
+  margin-top: 14px;
+}
+.bid-controls button {
+  flex: 0 0 auto; min-width: 150px;
+}
+.au-stage-msg {
+  font-size: 14px; color: var(--ink); margin: 6px 0;
+  font-family: 'Cormorant Garamond', serif;
+}
+.au-begin { margin-top: 10px; min-width: 200px; }
+/* the lot-sold pause bar — appears in place once the lot closes */
+.au-sold-bar {
+  margin-top: 14px; padding-top: 12px;
+  border-top: 1px solid var(--line);
+  display: flex; flex-direction: column; align-items: center; gap: 9px;
+}
+.au-sold-line {
+  font-size: 13.5px; color: var(--ink); font-style: italic;
+}
 .lot-tracker { font-size: 12px; color: var(--ink-soft); margin-bottom: 8px; }
 
 .stars { color: var(--brass-bright); letter-spacing: 1px; }
@@ -296,15 +333,19 @@ button.primary:hover:not(:disabled), .next-week-btn:hover:not(:disabled) {
   border: 3px solid rgba(255,255,255,0.85);
   box-shadow: 0 2px 8px rgba(0,0,0,0.5);
   cursor: pointer; padding: 0;
-  transition: transform 0.1s ease, box-shadow 0.1s ease;
+  /* only colour/shadow animate — position is fixed, no scaling,
+     so the markers never jump or drift when clicked. */
+  transition: border-color 0.12s ease, box-shadow 0.12s ease,
+              filter 0.12s ease;
 }
 .dist-btn:hover {
-  transform: translate(-50%, -50%) scale(1.18);
+  border-color: #ffffff;
+  filter: brightness(1.15);
   box-shadow: 0 3px 12px rgba(0,0,0,0.6);
 }
 .dist-btn.selected {
-  transform: translate(-50%, -50%) scale(1.2);
   border-color: var(--brass-bright);
+  box-shadow: 0 0 0 3px rgba(195,157,91,0.55), 0 2px 10px rgba(0,0,0,0.55);
 }
 .dist-btn.empty { opacity: 0.65; }
 .dist-label {
