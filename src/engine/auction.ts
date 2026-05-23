@@ -34,7 +34,7 @@ export function lotEstimate(artifactId: string): number {
 export function startLot(state: GameState, artifactId: string): AuctionState {
   const art = ARTIFACT_BY_ID[artifactId];
   const estimate = lotEstimate(artifactId);
-  const starsHere = state.expertise[art.category] || 0;
+  const starsHere = state.expertise[art.style] || 0;
   const expertiseCut = 1 - Math.min(0.35, starsHere * 0.06);
   // ceiling spans below to moderately above the estimate
   const rivalCeiling = Math.round(estimate * rand(0.65, 1.35) * expertiseCut);

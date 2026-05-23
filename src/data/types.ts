@@ -1,60 +1,82 @@
 /* ============================================================
-   TYPES  ( src/data/ )
-   Shared type definitions. No logic here.
+   TYPES  ( src/data/ )   — STAGE 1 REWORK
+   Artifacts are now described by three independent dimensions:
+     - type   : what kind of object (Painting, Sculpture, ...)
+     - style  : the tradition it belongs to (Renaissance, ...)
+     - rarity : derived from a numeric score
+   A museum specialises in a STYLE; a styled room takes any type
+   of that style.
    ============================================================ */
 
-export type CategoryId =
-  | 'renaissance' | 'egypt' | 'eastasia' | 'sculpture';
+/* --- artifact dimensions ----------------------------------- */
+export type ArtType = 'Painting' | 'Sculpture' | 'Manuscript' | 'Object';
+
+export type StyleId =
+  | 'egyptian' | 'classical' | 'medieval' | 'renaissance' | 'baroque'
+  | 'asian' | 'romanticism' | 'impressionism' | 'modernism'
+  | 'contemporary' | 'popculture' | 'precolumbian' | 'islamic';
 
 export type RarityId =
   | 'common' | 'uncommon' | 'rare' | 'epic' | 'legend' | 'worldicon';
 
-/** An artifact is a real-ish artwork the player can acquire.
- *  `score` is the master quality number (0..250+); rarity is
- *  DERIVED from it via rarityForScore(). `value` is the rough
- *  auction price — correlated to score but not a rigid formula,
- *  so bargains exist. */
-export interface Artifact {
-  id: string;
-  name: string;
-  category: CategoryId;
-  author: string;
-  year: string;
-  type: string;          // Painting, Sculpture, Manuscript, ...
-  style: string;         // High Renaissance, New Kingdom, ...
-  description: string;   // one or two sentences
-  score: number;         // master quality value
-  value: number;         // baseline auction price
-  image: string;         // path under /artifacts/, letter fallback if missing
-}
+export interface StyleDef { id: StyleId; name: string; }
 
 export interface RarityBand {
   id: RarityId;
   name: string;
-  min: number;           // inclusive score floor
-  cls: string;           // css class for colour
-  hex: string;           // hex colour for slot fills
+  min: number;       // inclusive score floor
+  cls: string;       // css colour class
+  hex: string;       // slot fill colour
 }
 
-export interface CategoryDef {
-  id: CategoryId;
+/** An artwork. `style` is what a museum specialises in; `type` is
+ *  an independent filter dimension. `id` is the catalogue number
+ *  shown as 0001 etc. */
+export interface Artifact {
+  id: string;            // '0001'
   name: string;
+  type: ArtType;
+  style: StyleId;
+  author: string;        // often 'Unknown'
+  year: string;          // estimated, e.g. 'c. 1503' or '1969'
+  description: string;
+  score: number;         // master quality; rarity derived from it
+  value: number;         // baseline auction price
+  image: string;         // path under /artifacts/, letter fallback
 }
 
 /* --- buildings --------------------------------------------- */
 export interface HallDef {
-  id: string;
-  name: string;
-  roomCap: number;
-  startRooms: number;
+  id: string; name: string; roomCap: number; startRooms: number;
 }
 export interface BuildingDef {
-  id: string;
-  name: string;
-  blurb: string;
+  id: string; name: string; blurb: string;
   prestige: number;
   halls: HallDef[];
   moveCost: number;
+  maintenance: number;   // weekly upkeep expense
+}
+
+/* --- districts --------------------------------------------- */
+export interface DistrictDef {
+  id: string; name: string; blurb: string;
+  accent: string;
+  pos: { x: number; y: number };
+  buildingIds: string[];
+}
+
+/* --- competitor museums ------------------------------------ */
+export type MuseumTier = 'local' | 'regional' | 'national' | 'global';
+/** A static, real-inspired competitor. Numbers never change. */
+export interface StaticMuseum {
+  id: string;
+  name: string;
+  city: string;
+  tier: MuseumTier;
+  inYourCity: boolean;   // true = competes in the City ranking
+  fame: number;
+  quality: number;
+  visitors: number;
 }
 
 /* --- live game state --------------------------------------- */
@@ -63,26 +85,24 @@ export interface Room {
   hallId: string;
   hallName: string;
   unlocked: boolean;
-  theme: CategoryId | null;
-  researching: { specialty: CategoryId; weeksLeft: number } | null;
-  items: string[];                 // artifact ids
+  theme: StyleId | null;             // a room specialises in a STYLE
+  researching: { style: StyleId; weeksLeft: number } | null;
+  items: string[];
 }
 
 export type EventKind = 'auction' | 'donation';
-
-/** A weekly opportunity. Several may be offered in one week. */
 export interface GameEvent {
   id: string;
   kind: EventKind;
-  category: CategoryId;
-  house: string;
+  houseId: string;          // which auction house this sale belongs to
+  house: string;            // the house's display name
   skewLabel: string;
   fee: number;
   lotIds: string[];
-  // populated once attended:
   attended?: boolean;
   lotIndex?: number;
   acquired?: string[];
+  passed?: string[];        // lots the player chose to skip
 }
 
 export interface AuctionState {
@@ -104,40 +124,61 @@ export interface AuctionState {
 }
 
 export interface Sponsor {
-  id: string;
-  name: string;
-  gift: number;          // one-off funds given
-  weeklyBonus: number;   // recurring fame per week
-  wingNamed: string | null;  // hallId this sponsor's name is attached to
+  id: string; name: string;
+  gift: number; weeklyBonus: number;
+  wingNamed: string | null;
 }
 
-export type TicketPrice = 'free' | 'low' | 'standard' | 'premium';
+export type TicketPrice = number;   // an actual currency amount now
 
 export interface LogEntry { kind: 'good' | 'bad' | 'note'; text: string; }
 
-export type Phase = 'choose-specialty' | 'playing' | 'ended';
+export type Phase = 'choose-specialty' | 'name-gallery' | 'playing' | 'ended';
+
+/** One of the three rival players sharing the city. */
+export interface RivalPlayer {
+  id: string;
+  name: string;
+  fame: number;
+  quality: number;
+  visitors: number;
+}
 
 export interface GameState {
+  playerName: string;
+  galleryName: string;
   funds: number;
   fame: number;
   week: number;
-  specialties: CategoryId[];
-  research: { specialty: CategoryId; weeksLeft: number } | null;
-  expertise: Record<CategoryId, number>;
+  specialties: StyleId[];
+  research: { style: StyleId; weeksLeft: number } | null;
+  expertise: Partial<Record<StyleId, number>>;
   buildingId: string;
   rooms: Room[];
   owned: string[];
-  rivalFame: number;
-  rivalQuality: number;
+  rivals: RivalPlayer[];          // the 3 rival players
   log: LogEntry[];
-  events: GameEvent[];          // this week's offered events
-  activeEvent: GameEvent | null;// the one currently being attended
+  events: GameEvent[];
+  activeEvent: GameEvent | null;
   auction: AuctionState | null;
-  pendingItemId: string | null; // a won artifact awaiting placement
-  // management
+  pendingItemId: string | null;
   ticket: TicketPrice;
   sponsors: Sponsor[];
-  wingNames: Record<string, string>;  // hallId -> sponsor display name
-  adWeeksLeft: number;          // weeks of active advertising remaining
+  wingNames: Record<string, string>;
+  adWeeksLeft: number;
+  lastRevenue: number;
+  lastExpenses: number;
+  joinedHouses: string[];         // auction houses the player has paid to join
   phase: Phase;
+}
+
+/* --- save slots -------------------------------------------- */
+export interface SaveSlot {
+  slot: number;                   // 0,1,2
+  playerName: string;
+  galleryName: string;
+  week: number;
+  fame: number;
+  savedAt: number;                // epoch ms
+  state: GameState;
 }

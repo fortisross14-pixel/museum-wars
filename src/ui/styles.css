@@ -391,3 +391,108 @@ button.small { font-size: 12px; padding: 6px 10px; }
   width: 12px; height: 12px; border-radius: 2px; flex: 0 0 12px;
 }
 .drag-hint { font-size: 11px; color: var(--ink-soft); font-style: italic; }
+
+/* ============================================================
+   HOME / SAVE SLOTS
+   ============================================================ */
+.home-wrap { max-width: 560px; margin: 0 auto; padding: 30px 16px; }
+.home-title {
+  font-family: 'Cormorant Garamond', serif; font-size: 42px;
+  text-align: center; color: var(--ink); letter-spacing: 1px;
+}
+.home-sub {
+  text-align: center; font-style: italic; color: var(--ink-soft);
+  margin-bottom: 24px; font-size: 14px;
+}
+.slot-card {
+  background: var(--card); border: 1px solid var(--line);
+  border-left: 4px solid var(--brass); border-radius: 2px;
+  padding: 14px 16px; margin-bottom: 12px;
+}
+.slot-card.empty { border-left-color: var(--line); }
+.slot-head { display: flex; justify-content: space-between; align-items: baseline; }
+.slot-name { font-family: 'Cormorant Garamond', serif; font-size: 19px; font-weight: 600; }
+.slot-meta { font-size: 12px; color: var(--ink-soft); }
+.slot-actions { display: flex; gap: 8px; margin-top: 10px; }
+
+/* form fields */
+.field { margin: 12px 0; }
+.field label {
+  display: block; font-size: 11px; text-transform: uppercase;
+  letter-spacing: 1.2px; color: var(--brass); margin-bottom: 4px;
+}
+.field input {
+  width: 100%; font-family: 'Spectral', serif; font-size: 15px;
+  padding: 9px 11px; border: 1px solid var(--line); border-radius: 2px;
+  background: var(--parchment); color: var(--ink);
+}
+.field input:focus { outline: 2px solid var(--brass); }
+
+/* next-week button in the header */
+.next-week-btn {
+  background: var(--brass); color: var(--ink);
+  border: 1px solid var(--brass-bright); font-weight: 600;
+  font-size: 13px; padding: 8px 14px;
+}
+.next-week-btn:hover:not(:disabled) { background: var(--brass-bright); }
+
+/* the welcome / onboarding banner */
+.welcome {
+  background: var(--ink); color: var(--parchment);
+  border-radius: 3px; padding: 18px; margin-bottom: 16px;
+}
+.welcome h2 { color: var(--brass-bright); font-size: 24px; margin-bottom: 6px; }
+.welcome p { font-size: 13px; margin-bottom: 6px; }
+
+/* ============================================================
+   COMPETITORS / RANKINGS
+   ============================================================ */
+.rank-toggle { display: flex; gap: 8px; margin: 6px 0 12px; }
+.rank-row {
+  display: flex; gap: 10px; align-items: center;
+  padding: 8px 10px; border-bottom: 1px solid var(--line);
+}
+.rank-row.you { background: rgba(156,122,60,0.14); border-radius: 2px; }
+.rank-pos {
+  font-family: 'Cormorant Garamond', serif; font-size: 18px; font-weight: 600;
+  width: 34px; text-align: center; color: var(--brass);
+}
+.rank-body { flex: 1; min-width: 0; }
+.rank-name { font-family: 'Cormorant Garamond', serif; font-size: 16px; font-weight: 600; }
+.rank-sub { font-size: 11px; color: var(--ink-soft); }
+.rank-stat {
+  font-variant-numeric: tabular-nums; font-size: 13px;
+  text-align: right; min-width: 64px;
+}
+.tier-tag {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 1px;
+  padding: 1px 5px; border-radius: 2px; border: 1px solid var(--line);
+  color: var(--ink-soft);
+}
+
+/* ============================================================
+   CODEX
+   ============================================================ */
+.filter-bar { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+.filter-chip {
+  font-size: 11px; padding: 4px 9px; border: 1px solid var(--line);
+  border-radius: 2px; background: var(--parchment); cursor: pointer;
+}
+.filter-chip.active { background: var(--ink); color: var(--parchment); border-color: var(--ink); }
+.filter-group-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px;
+  color: var(--brass); margin: 8px 0 2px;
+}
+.codex-row {
+  display: flex; gap: 10px; align-items: center;
+  padding: 8px 0; border-bottom: 1px solid var(--line);
+}
+.codex-id {
+  font-family: 'Cormorant Garamond', serif; font-size: 13px;
+  color: var(--ink-soft); width: 42px;
+}
+.codex-body { flex: 1; min-width: 0; }
+.codex-name { font-size: 14px; font-weight: 600; }
+.codex-name.locked { color: var(--ink-soft); letter-spacing: 2px; }
+.codex-sub { font-size: 11px; color: var(--ink-soft); }
+.codex-count { font-size: 12px; color: var(--ink-soft); margin: 6px 0; }

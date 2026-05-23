@@ -1,41 +1,146 @@
 /* ============================================================
-   APP  ( src/ui/ )
-   React root. GameState in useState; handlers call pure Engine
-   functions. Auction tick loop is a useEffect interval.
+   APP  ( src/ui/ )  — STAGE 1 REWORK
+   React root. A game lives in one of three localStorage slots and
+   autosaves after every meaningful change.
 
-   Two collection screens:
-     - Map        : districts -> fixed building lists -> acquire/move
-     - Galleries  : cutaway interior; select room, set specialty,
-                    drag-drop (or tap) artworks into wall slots.
+   Screens:
+     home          : pick a save slot
+     choose-style  : found a museum (pick a style)
+     name-gallery  : name the gallery, set opening ticket price
+     playing       : the tabbed game
+       Galleries / Map / This Week / Specialties / Manage
+       Competitors / Codex
+     ended         : final score
    ============================================================ */
 import { useState, useEffect, useRef, useCallback } from 'react';
 import './styles.css';
 import type {
-  GameState, CategoryId, Room, TicketPrice,
+  GameState, StyleId, Room, SaveSlot,
 } from '../data/types';
 import {
-  CATEGORIES, CATEGORY_IDS, BUILDINGS, TICKET_PRICING, AD_CAMPAIGN,
-  START, ROOM_CAPACITY, DISTRICTS, districtOfBuilding, typeIcon,
-  rarityForScore,
+  STYLES, STYLE_IDS, ART_TYPES, BUILDINGS, AD_CAMPAIGN, START,
+  AUCTION_HOUSES,
+  DISTRICTS, districtOfBuilding, typeIcon, rarityForScore,
+  RARITY_BANDS, STATIC_MUSEUMS,
 } from '../data/constants';
-import { ARTIFACT_BY_ID } from '../data/artifacts';
+import { ARTIFACTS, ARTIFACT_BY_ID } from '../data/artifacts';
 import * as E from '../engine/game';
 import * as Auc from '../engine/auction';
+import * as Saves from '../engine/saves';
 import { money, stars } from '../engine/util';
 import { Thumb, RarityPill, ArtifactDetail } from './components';
 
-type Tab = 'galleries' | 'map' | 'week' | 'specialties' | 'manage' | 'records';
+type Tab =
+  | 'galleries' | 'map' | 'week' | 'specialties'
+  | 'manage' | 'competitors' | 'codex';
 
+/* ============================================================
+   ROOT — owns the active slot, routes home vs in-game
+   ============================================================ */
 export default function App() {
-  const [state, setState] = useState<GameState>(() => E.newGame());
+  const [slot, setSlot] = useState<number | null>(null);
+  const [state, setState] = useState<GameState | null>(null);
+
+  // start a brand-new game in a slot
+  const startNew = (s: number) => {
+    setSlot(s);
+    setState(E.newGame());
+  };
+  // load an existing slot
+  const loadGame = (s: number) => {
+    const rec = Saves.loadSlot(s);
+    if (rec) { setSlot(s); setState(rec.state); }
+  };
+  // back to the home screen
+  const toHome = () => { setSlot(null); setState(null); };
+
+  if (slot === null || !state) {
+    return <Home onNew={startNew} onLoad={loadGame} />;
+  }
+  return (
+    <Game slot={slot} initial={state} onExit={toHome} />
+  );
+}
+
+/* ============================================================
+   HOME — three save slots
+   ============================================================ */
+function Home({
+  onNew, onLoad,
+}: {
+  onNew: (slot: number) => void;
+  onLoad: (slot: number) => void;
+}) {
+  const [slots, setSlots] = useState<(SaveSlot | null)[]>(() => Saves.listSlots());
+  const refresh = () => setSlots(Saves.listSlots());
+
+  return (
+    <div className="home-wrap">
+      <div className="home-title">Museum Wars</div>
+      <div className="home-sub">Build a museum to rival the world's greatest.</div>
+      {slots.map((rec, i) => (
+        <div key={i} className={'slot-card' + (rec ? '' : ' empty')}>
+          <div className="slot-head">
+            <div className="slot-name">
+              {rec ? rec.galleryName : `Empty Slot ${i + 1}`}
+            </div>
+            <div className="slot-meta">Slot {i + 1}</div>
+          </div>
+          {rec ? (
+            <>
+              <div className="slot-meta">
+                {rec.playerName} · Week {rec.week} · {rec.fame} fame
+              </div>
+              <div className="slot-actions">
+                <button onClick={() => onLoad(i)}>Continue</button>
+                <button className="ghost"
+                  onClick={() => {
+                    if (confirm('Delete this saved game?')) {
+                      Saves.deleteSlot(i); refresh();
+                    }
+                  }}>
+                  Delete
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="slot-actions">
+              <button onClick={() => onNew(i)}>New Game</button>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ============================================================
+   GAME — one active slot. Autosaves on every state change.
+   ============================================================ */
+function Game({
+  slot, initial, onExit,
+}: {
+  slot: number;
+  initial: GameState;
+  onExit: () => void;
+}) {
+  const [state, setRawState] = useState<GameState>(initial);
   const [tab, setTab] = useState<Tab>('galleries');
   const [toast, setToast] = useState<string | null>(null);
   const [openArtifactId, setOpenArtifactId] = useState<string | null>(null);
+  // a confirm prompt before advancing the week with events pending
+  const [confirmSkip, setConfirmSkip] = useState(false);
 
   const flash = useCallback((msg: string) => {
     setToast(msg);
     window.setTimeout(() => setToast(t => (t === msg ? null : t)), 2600);
   }, []);
+
+  /* --- autosave: persist the slot whenever state changes ---- */
+  const setState = useCallback((s: GameState) => {
+    setRawState(s);
+    Saves.saveSlot(slot, s);
+  }, [slot]);
 
   /* --- auction tick loop ----------------------------------- */
   const lastRef = useRef<number>(0);
@@ -43,7 +148,7 @@ export default function App() {
     if (!state.auction || state.auction.over) return;
     lastRef.current = performance.now();
     const handle = window.setInterval(() => {
-      setState(s => {
+      setRawState(s => {
         if (!s.auction || s.auction.over) return s;
         const now = performance.now();
         const delta = now - lastRef.current;
@@ -53,29 +158,64 @@ export default function App() {
     }, 100);
     return () => window.clearInterval(handle);
   }, [state.auction?.over, state.auction?.artifactId]);
+  // when an auction resolves, persist once
+  useEffect(() => {
+    if (state.auction?.over) Saves.saveSlot(slot, state);
+  }, [state.auction?.over, slot, state]);
 
   const apply = (res: { state: GameState; error?: string }) => {
     if (res.error) { flash(res.error); return; }
     setState(res.state);
   };
 
+  /* --- onboarding screens ---------------------------------- */
   if (state.phase === 'choose-specialty') {
-    return <ChooseSpecialty onPick={cat => setState(E.chooseSpecialty(state, cat))} />;
+    return <ChooseStyle
+      onPick={artId => setState(E.chooseFoundingArtwork(state, artId))}
+      onExit={onExit} />;
   }
-  if (state.phase === 'ended') {
-    return (
-      <Shell state={state} tab={tab} setTab={() => {}} hideTabs>
-        <EndScreen state={state}
-          onRestart={() => { setState(E.newGame()); setTab('galleries'); }} />
-      </Shell>
-    );
+  if (state.phase === 'name-gallery') {
+    return <NameGallery state={state}
+      onConfirm={(pn, gn, ticket) =>
+        setState(E.nameGallery(state, pn, gn, ticket))} />;
   }
 
+  /* --- next week, with skip-events confirm ----------------- */
+  const doNextWeek = () => {
+    if (state.events.length > 0) { setConfirmSkip(true); return; }
+    setState(E.advanceWeek(state));
+  };
+  const confirmSkipYes = () => {
+    setConfirmSkip(false);
+    setState(E.advanceWeek(state));
+  };
+  const confirmSkipNo = () => {
+    setConfirmSkip(false);
+    setTab('week');
+  };
+
+  /* --- body ------------------------------------------------ */
   let body: React.ReactNode;
   if (openArtifactId) {
+    body = <ArtifactDetail artifact={ARTIFACT_BY_ID[openArtifactId]}
+      onBack={() => setOpenArtifactId(null)} />;
+  } else if (confirmSkip) {
     body = (
-      <ArtifactDetail artifact={ARTIFACT_BY_ID[openArtifactId]}
-        onBack={() => setOpenArtifactId(null)} />
+      <div className="panel">
+        <h2>Events This Week<span className="sub">before you move on</span></h2>
+        <p className="empty-note">
+          There {state.events.length === 1 ? 'is' : 'are'} {state.events.length}
+          {' '}acquisition opportunit{state.events.length === 1 ? 'y' : 'ies'} this
+          week. If you advance now they will be missed.
+        </p>
+        <div className="divider" />
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={confirmSkipNo}>See the Events</button>
+          <button className="ghost" onClick={confirmSkipYes}>
+            Skip &amp; Advance the Week
+          </button>
+        </div>
+      </div>
     );
   } else if (tab === 'galleries') {
     body = <GalleriesTab state={state} apply={apply} flash={flash}
@@ -84,18 +224,21 @@ export default function App() {
     body = <MapTab state={state} apply={apply} />;
   } else if (tab === 'week') {
     body = <WeekTab state={state} setState={setState} flash={flash}
-      goGalleries={() => setTab('galleries')} />;
+      goGalleries={() => setTab('galleries')} onNextWeek={doNextWeek} />;
   } else if (tab === 'specialties') {
     body = <SpecialtiesTab state={state} apply={apply} />;
   } else if (tab === 'manage') {
     body = <ManageTab state={state} setState={setState} apply={apply} />;
+  } else if (tab === 'competitors') {
+    body = <CompetitorsTab state={state} />;
   } else {
-    body = <RecordsTab state={state} />;
+    body = <CodexTab state={state} onArtifact={setOpenArtifactId} />;
   }
 
   return (
     <Shell state={state} tab={tab}
-      setTab={t => { setOpenArtifactId(null); setTab(t); }}>
+      setTab={t => { setOpenArtifactId(null); setConfirmSkip(false); setTab(t); }}
+      onExit={onExit} onNextWeek={doNextWeek}>
       {body}
       {toast && <div className="toast">{toast}</div>}
     </Shell>
@@ -103,31 +246,41 @@ export default function App() {
 }
 
 /* ============================================================
-   SHELL
+   SHELL — header (with Next Week), stat strip, tab bar
    ============================================================ */
 function Shell({
-  state, tab, setTab, hideTabs, children,
+  state, tab, setTab, hideTabs, onExit, onNextWeek, children,
 }: {
   state: GameState; tab: Tab; setTab: (t: Tab) => void;
-  hideTabs?: boolean; children: React.ReactNode;
+  hideTabs?: boolean; onExit: () => void; onNextWeek: () => void;
+  children: React.ReactNode;
 }) {
   const tabs: [Tab, string][] = [
-    ['galleries', 'Galleries'], ['map', 'Map'], ['week', 'This Week'],
-    ['specialties', 'Specialties'], ['manage', 'Manage'], ['records', 'Records'],
+    ['galleries', 'Galleries'], ['map', 'Map'], ['week', 'Week'],
+    ['specialties', 'Styles'], ['manage', 'Manage'],
+    ['competitors', 'Rivals'], ['codex', 'Codex'],
   ];
+  const inGame = state.phase === 'playing';
   return (
     <>
       <header>
-        <h1>Museum Wars</h1>
-        <span className="tagline">a 50-week run</span>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+          <h1 style={{ cursor: 'pointer' }} onClick={onExit}>Museum Wars</h1>
+          <span className="tagline">{state.galleryName || 'a 50-week run'}</span>
+        </div>
+        {inGame && (
+          <button className="next-week-btn" onClick={onNextWeek}>
+            Next Week →
+          </button>
+        )}
       </header>
       <div className="stats">
-        <Stat label="Week" value={`${Math.min(state.week, START.totalWeeks)} / ${START.totalWeeks}`} />
+        <Stat label="Week" value={String(state.week)} />
         <Stat label="Funds" value={money(state.funds)} />
         <Stat label="Fame" value={String(state.fame)} />
         <Stat label="Quality" value={String(E.museumQuality(state))} />
-        <Stat label="Rival" value={String(state.rivalFame)} />
-        <Stat label="Rank" value={E.ranking(state) === 1 ? '#1' : '#2'} />
+        <Stat label="Revenue" value={money(state.lastRevenue)} />
+        <Stat label="Upkeep" value={money(state.lastExpenses)} />
       </div>
       {!hideTabs && (
         <div className="tabs">
@@ -151,43 +304,56 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 /* ============================================================
-   CHOOSE SPECIALTY
+   ONBOARDING — choose style
    ============================================================ */
-function ChooseSpecialty({ onPick }: { onPick: (c: CategoryId) => void }) {
-  const [offered] = useState<CategoryId[]>(() => {
-    const pool = [...CATEGORY_IDS];
-    const out: CategoryId[] = [];
-    while (out.length < 3 && pool.length)
-      out.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
-    return out;
-  });
+function ChooseStyle({
+  onPick, onExit,
+}: {
+  onPick: (artId: string) => void;
+  onExit: () => void;
+}) {
+  const [offered] = useState<string[]>(() => E.foundingArtworkChoices());
   return (
     <>
       <header>
-        <h1>Museum Wars</h1>
-        <span className="tagline">found your museum</span>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+          <h1 style={{ cursor: 'pointer' }} onClick={onExit}>Museum Wars</h1>
+          <span className="tagline">found your museum</span>
+        </div>
       </header>
       <main>
         <div className="panel">
-          <h2>Opening Acquisition Event
-            <span className="sub">choose a founding specialty</span></h2>
+          <h2>Opening Acquisition
+            <span className="sub">choose your founding work</span></h2>
           <p className="empty-note">
-            Your museum begins as a single rented room. The field you choose
-            shapes the events that come to you each week. Further specialties
-            can be researched later as your fame grows.
+            Every museum begins with a single acquisition. Choose one of these
+            works to lead your collection — your museum will specialise in its
+            style, and that piece will hang from your opening day. Further
+            styles can be researched later as your fame grows.
           </p>
           <div className="divider" />
-          {offered.map(cid => (
-            <div className="row" key={cid}>
-              <div className="meta">
-                <div className="name">{CATEGORIES[cid].name}</div>
-                <div className="info">
-                  Auctions and donations in this field will come to you.
+          {offered.map(id => {
+            const art = ARTIFACT_BY_ID[id];
+            const band = rarityForScore(art.score);
+            return (
+              <div className="row" key={id}>
+                <div className="meta">
+                  <div className="name">
+                    {typeIcon(art.type)} {art.name}
+                  </div>
+                  <div className="info">
+                    {art.type} · {STYLES[art.style].name} · {art.year} —{' '}
+                    {art.description}
+                  </div>
+                  <div className="info" style={{ marginTop: 2 }}>
+                    <span className={'pill ' + band.cls}>{band.name}</span>
+                    {' '}· founds a {STYLES[art.style].name} museum
+                  </div>
                 </div>
+                <button onClick={() => onPick(id)}>Found</button>
               </div>
-              <button onClick={() => onPick(cid)}>Found</button>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </main>
     </>
@@ -195,7 +361,76 @@ function ChooseSpecialty({ onPick }: { onPick: (c: CategoryId) => void }) {
 }
 
 /* ============================================================
-   MAP TAB — city image with round district buttons
+   ONBOARDING — name the gallery + set ticket price
+   ============================================================ */
+function NameGallery({
+  state, onConfirm,
+}: {
+  state: GameState;
+  onConfirm: (playerName: string, galleryName: string, ticket: number) => void;
+}) {
+  const [playerName, setPlayerName] = useState('');
+  const [galleryName, setGalleryName] = useState('');
+  const [ticket, setTicket] = useState('8');
+  const founding = STYLES[state.specialties[0]];
+
+  return (
+    <>
+      <header>
+        <h1>Museum Wars</h1>
+        <span className="tagline">your first gallery</span>
+      </header>
+      <main>
+        <div className="welcome">
+          <h2>The Local Gallery is Yours</h2>
+          <p>
+            You have been granted a small rented gallery in the Historic
+            District — a {founding.name} museum. Right now its walls are bare.
+          </p>
+          <p>
+            Name your gallery (this is permanent), set an opening admission
+            price (you can change the price later from the Manage tab), then
+            begin filling those empty rooms.
+          </p>
+        </div>
+        <div className="panel">
+          <h2>Open Your Doors<span className="sub">name &amp; price</span></h2>
+          <div className="field">
+            <label>Your Name</label>
+            <input value={playerName}
+              placeholder="e.g. Eleanor Wynn"
+              onChange={e => setPlayerName(e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Gallery Name</label>
+            <input value={galleryName}
+              placeholder="e.g. The Wynn Collection"
+              onChange={e => setGalleryName(e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Opening Ticket Price (§)</label>
+            <input value={ticket} inputMode="numeric"
+              onChange={e => setTicket(e.target.value.replace(/[^0-9]/g, ''))} />
+          </div>
+          <p className="empty-note">
+            A high price on an empty gallery draws no one. Start low while
+            your collection is small.
+          </p>
+          <div className="divider" />
+          <button className="big"
+            disabled={!galleryName.trim()}
+            onClick={() => onConfirm(playerName, galleryName,
+              parseInt(ticket || '0', 10))}>
+            Open the Gallery →
+          </button>
+        </div>
+      </main>
+    </>
+  );
+}
+
+/* ============================================================
+   MAP TAB
    ============================================================ */
 function MapTab({
   state, apply,
@@ -222,8 +457,7 @@ function MapTab({
           {mapFailed ? (
             <div className="nomap">
               City map image not found — drop <b>map-city.png</b> into the
-              project's <b>public/</b> folder. The district markers below still
-              work.
+              project's <b>public/</b> folder. The markers below still work.
             </div>
           ) : (
             <img src={import.meta.env.BASE_URL + 'map-city.png'}
@@ -234,10 +468,7 @@ function MapTab({
               className={'dist-btn'
                 + (selected === d.id ? ' selected' : '')
                 + (d.buildingIds.length === 0 ? ' empty' : '')}
-              style={{
-                left: d.pos.x + '%', top: d.pos.y + '%',
-                background: d.accent,
-              }}
+              style={{ left: d.pos.x + '%', top: d.pos.y + '%', background: d.accent }}
               title={d.name}
               onClick={() => setSelected(d.id)} />
           ))}
@@ -250,7 +481,6 @@ function MapTab({
         </div>
       </div>
 
-      {/* selected district detail */}
       <div className="district" style={{ borderLeftColor: district.accent }}>
         <div className="district-name">{district.name}</div>
         <div className="district-blurb">{district.blurb}</div>
@@ -272,7 +502,7 @@ function MapTab({
                   <div className="meta">
                     <div className="name">{b.name}</div>
                     <div className="info">
-                      {b.blurb} · {rooms} rooms · prestige ×{b.prestige}
+                      {b.blurb} · {rooms} rooms · upkeep {money(b.maintenance)}/wk
                     </div>
                   </div>
                   {isHere ? (
@@ -301,14 +531,14 @@ function MapTab({
 /* ============================================================
    GALLERIES TAB — cutaway interior with drag-drop slots
    ============================================================ */
-const ROOM_TINT: Record<CategoryId, string> = {
-  renaissance: '#3f4a31', egypt: '#5e3526',
-  eastasia: '#5a2e2a', sculpture: '#3a4654',
+const ROOM_TINT: Record<string, string> = {
+  renaissance: '#3f4a31', egyptian: '#5e3526', asian: '#5a2e2a',
+  classical: '#3a4654', medieval: '#3d3a2c', baroque: '#46322a',
+  romanticism: '#3a3340', impressionism: '#3a4742', modernism: '#34404a',
+  contemporary: '#3a3a3e', popculture: '#4a2f3e', precolumbian: '#4a3a26',
+  islamic: '#2c4440',
 };
-const PLAQUE_TINT: Record<CategoryId, string> = {
-  renaissance: '#2f3b2c', egypt: '#4a2e1f',
-  eastasia: '#4a2421', sculpture: '#2c3744',
-};
+function tintFor(style: StyleId) { return ROOM_TINT[style] || '#4a4030'; }
 
 function GalleriesTab({
   state, apply, flash, onArtifact,
@@ -322,22 +552,20 @@ function GalleriesTab({
   const [selectedRoom, setSelectedRoom] = useState<number | null>(null);
   const [heldArt, setHeldArt] = useState<string | null>(null);
 
-  // unplaced collection = owned minus everything in rooms (+ pending)
-  const placed = new Set(state.rooms.flatMap(r => r.items));
-  const unplaced = state.owned.filter(id => !placed.has(id));
+  const placedSet = new Set(state.rooms.flatMap(r => r.items));
+  const unplaced = state.owned.filter(id => !placedSet.has(id));
   if (state.pendingItemId && !unplaced.includes(state.pendingItemId))
     unplaced.unshift(state.pendingItemId);
 
   const placeInto = (artId: string, roomId: number) => {
     const art = ARTIFACT_BY_ID[artId];
     const room = state.rooms.find(r => r.id === roomId)!;
-    if (!E.canPlace(room, art.category)) {
+    if (!E.canPlace(room, art.style)) {
       flash(E.roomIsFull(room) ? 'That room is full.'
-        : 'That room is themed to a different field.');
+        : 'That room is themed to a different style.');
       return;
     }
-    const s2: GameState = { ...state, pendingItemId: artId };
-    apply(E.placeArtifact(s2, roomId));
+    apply(E.placeArtifact({ ...state, pendingItemId: artId }, roomId));
     setHeldArt(null);
   };
 
@@ -352,8 +580,8 @@ function GalleriesTab({
         <h2>{building.name}<span className="sub">your galleries</span></h2>
         {unplaced.length > 0 && (
           <p className="drag-hint">
-            Drag a work from your collection below into a grey slot — or tap a
-            work, then tap a slot. A room takes only works of its specialty.
+            Drag a work from your collection into a grey slot — or tap a work,
+            then tap a slot. A room takes only works of its style.
           </p>
         )}
       </div>
@@ -366,17 +594,15 @@ function GalleriesTab({
           </div>
           <div className="gallery-rooms">
             {hall.rooms.map(room => (
-              <GalleryRoom
-                key={room.id} state={state} room={room}
+              <GalleryRoom key={room.id} state={state} room={room}
                 selected={selectedRoom === room.id}
                 heldArt={heldArt}
                 onSelect={() => setSelectedRoom(
                   selectedRoom === room.id ? null : room.id)}
-                onAssign={cat => apply(E.assignRoom(state, room.id, cat))}
+                onAssign={st => apply(E.assignRoom(state, room.id, st))}
                 onOpen={() => apply(E.openRoom(state))}
                 onDropArt={artId => placeInto(artId, room.id)}
-                onSlotClick={onArtifact}
-              />
+                onSlotClick={onArtifact} />
             ))}
           </div>
         </div>
@@ -387,7 +613,7 @@ function GalleriesTab({
         {unplaced.length === 0 ? (
           <p className="empty-note">
             Every work you own is on display. Win more at auction from the
-            This Week tab.
+            Week tab.
           </p>
         ) : (
           <>
@@ -426,7 +652,7 @@ function GalleryRoom({
 }: {
   state: GameState; room: Room; selected: boolean; heldArt: string | null;
   onSelect: () => void;
-  onAssign: (c: CategoryId) => void;
+  onAssign: (s: StyleId) => void;
   onOpen: () => void;
   onDropArt: (artId: string) => void;
   onSlotClick: (artId: string) => void;
@@ -449,7 +675,7 @@ function GalleryRoom({
     return (
       <div className="groom" style={{ ['--room-tint' as string]: '#4a3f2c' }}>
         <div className="groom-plaque" style={{ ['--plaque' as string]: '#3a2f1f' }}>
-          <div className="pname">{CATEGORIES[room.researching.specialty].name}</div>
+          <div className="pname">{STYLES[room.researching.style].name}</div>
           <div className="psub">Researching</div>
         </div>
         <div style={{ color: '#d8c9a6', fontSize: 11, fontStyle: 'italic',
@@ -461,8 +687,8 @@ function GalleryRoom({
   }
 
   const theme = room.theme;
-  const heldCat = heldArt ? ARTIFACT_BY_ID[heldArt].category : null;
-  const droppable = !!theme && heldCat === theme && !E.roomIsFull(room);
+  const heldStyle = heldArt ? ARTIFACT_BY_ID[heldArt].style : null;
+  const droppable = !!theme && heldStyle === theme && !E.roomIsFull(room);
 
   if (!theme) {
     return (
@@ -475,16 +701,16 @@ function GalleryRoom({
         </div>
         {selected ? (
           <div className="groom-foot">
-            {state.specialties.map(sp => (
-              <button key={sp} className="assign-btn" onClick={() => onAssign(sp)}>
-                {CATEGORIES[sp].name}
+            {state.specialties.map(st => (
+              <button key={st} className="assign-btn" onClick={() => onAssign(st)}>
+                {STYLES[st].name}
               </button>
             ))}
           </div>
         ) : (
           <div style={{ color: '#d8c9a6', fontSize: 11, fontStyle: 'italic',
             textAlign: 'center', margin: 'auto 0' }}>
-            Unassigned — tap the plaque to choose a specialty.
+            Unassigned — tap the plaque to choose a style.
           </div>
         )}
       </div>
@@ -492,13 +718,13 @@ function GalleryRoom({
   }
 
   const slots: (string | null)[] = [];
-  for (let i = 0; i < ROOM_CAPACITY; i++) slots.push(room.items[i] || null);
+  for (let i = 0; i < 5; i++) slots.push(room.items[i] || null);
 
   return (
     <div
       className={'groom' + (selected ? ' selected' : '')
         + (dragOver && droppable ? ' droppable' : '')}
-      style={{ ['--room-tint' as string]: ROOM_TINT[theme] }}
+      style={{ ['--room-tint' as string]: tintFor(theme) }}
       onDragOver={e => { if (droppable) { e.preventDefault(); setDragOver(true); } }}
       onDragLeave={() => setDragOver(false)}
       onDrop={e => {
@@ -507,10 +733,10 @@ function GalleryRoom({
         if (id) onDropArt(id);
       }}>
       <div className="groom-plaque"
-        style={{ ['--plaque' as string]: PLAQUE_TINT[theme] }}
+        style={{ ['--plaque' as string]: '#2c2f24' }}
         onClick={onSelect}>
-        <div className="pname">{CATEGORIES[theme].name}</div>
-        <div className="psub">{room.items.length}/{ROOM_CAPACITY} · room</div>
+        <div className="pname">{STYLES[theme].name}</div>
+        <div className="psub">{room.items.length}/5 · room</div>
       </div>
       <div className="groom-slots">
         {slots.map((artId, i) => {
@@ -547,49 +773,82 @@ function GalleryRoom({
    WEEK TAB
    ============================================================ */
 function WeekTab({
-  state, setState, flash, goGalleries,
+  state, setState, flash, goGalleries, onNextWeek,
 }: {
   state: GameState;
   setState: (s: GameState) => void;
   flash: (m: string) => void;
   goGalleries: () => void;
+  onNextWeek: () => void;
 }) {
   if (state.activeEvent) {
     return <EventInterior state={state} setState={setState} flash={flash}
       goGalleries={goGalleries} />;
   }
-  const nextWeek = () => setState(E.advanceWeek(state));
-
   return (
     <div className="panel">
       <h2>Week {state.week}<span className="sub">the museum calendar</span></h2>
       {state.research && (
         <p className="empty-note">
-          Research in progress: {CATEGORIES[state.research.specialty].name} —
+          Research in progress: {STYLES[state.research.style].name} —
           {' '}{state.research.weeksLeft} week(s) remaining.
         </p>
       )}
+
+      {/* auction houses — join the ones your fame has opened */}
+      <div className="divider" />
+      <div className="filter-group-label">Auction Houses</div>
+      {AUCTION_HOUSES.map(h => {
+        const joined = state.joinedHouses.includes(h.id);
+        const unlocked = state.fame >= h.fameToUnlock;
+        return (
+          <div className="row" key={h.id}>
+            <div className="meta">
+              <div className="name">{h.name}</div>
+              <div className="info">
+                {h.blurb}
+                {h.attendFee > 0 ? ` · ${money(h.attendFee)} per sale` : ' · free entry'}
+              </div>
+            </div>
+            {joined ? (
+              <span className="bld-tag here">Member</span>
+            ) : !unlocked ? (
+              <span className="bld-tag locked">{h.fameToUnlock} fame</span>
+            ) : (
+              <button disabled={state.funds < h.joinFee}
+                onClick={() => {
+                  const res = E.joinHouse(state, h.id);
+                  if (res.error) { flash(res.error); return; }
+                  setState(res.state);
+                }}>
+                Join · {money(h.joinFee)}
+              </button>
+            )}
+          </div>
+        );
+      })}
+
       <div className="divider" />
       {state.events.length === 0 ? (
         <p className="empty-note">
-          A quiet week — no acquisition opportunities have come to the museum.
+          A quiet week — none of your auction houses are holding a sale.
         </p>
       ) : (
         <>
           <p className="empty-note">
-            {state.events.length} opportunit{state.events.length === 1 ? 'y' : 'ies'}
+            {state.events.length} sale{state.events.length === 1 ? '' : 's'}
             {' '}this week. Attend any you wish, in any order.
           </p>
           <div style={{ marginTop: 10 }}>
             {state.events.map(ev => (
               <div className="event-card" key={ev.id}>
-                <div className="event-kind">
-                  {ev.kind === 'donation' ? 'Donation Opportunity' : 'Auction Invitation'}
-                </div>
+                <div className="event-kind">Auction</div>
                 <div className="event-title">{ev.house}</div>
                 <div className="event-body">
-                  {ev.lotIds.length} works on offer — {ev.skewLabel}.
-                  Attendance fee {money(ev.fee)}.
+                  {ev.lotIds.length} lots on offer — {ev.skewLabel}.
+                  {ev.fee > 0
+                    ? ` Attendance fee ${money(ev.fee)}.`
+                    : ' Free to attend.'}
                 </div>
                 <div className="event-controls">
                   <button disabled={state.funds < ev.fee}
@@ -602,7 +861,7 @@ function WeekTab({
                           res.state.activeEvent!.lotIds[0]),
                       });
                     }}>
-                    Attend · {money(ev.fee)}
+                    Attend{ev.fee > 0 ? ` · ${money(ev.fee)}` : ''}
                   </button>
                 </div>
               </div>
@@ -611,7 +870,7 @@ function WeekTab({
         </>
       )}
       <div className="divider" />
-      <button className="big" onClick={nextWeek}>Advance to Next Week →</button>
+      <button className="big" onClick={onNextWeek}>Advance to Next Week →</button>
     </div>
   );
 }
@@ -645,8 +904,8 @@ function EventInterior({
       <div className="panel auction-stage">
         <h2>{ev.house}<span className="sub">concluded</span></h2>
         <p className="empty-note">
-          The {ev.kind} has concluded. You acquired {ev.acquired?.length || 0}
-          {' '}of {ev.lotIds.length} works.
+          The sale has concluded. You acquired {ev.acquired?.length || 0}
+          {' '}of {ev.lotIds.length} lots.
         </p>
         <div className="divider" />
         <button onClick={() => setState({ ...state, activeEvent: null })}>
@@ -711,24 +970,38 @@ function EventInterior({
       <div className="rival-tag">{a.message}</div>
       <div className="bid-controls">
         {!a.over ? (
-          <button
-            disabled={a.mode === 'announcing' || a.leader === 'player'
-              || myNext > state.funds}
-            onClick={onBid}>
-            {a.leader === 'player' ? 'You lead' : `Bid ${money(myNext)}`}
-          </button>
+          <>
+            <button
+              disabled={a.mode === 'announcing' || a.leader === 'player'
+                || myNext > state.funds}
+              onClick={onBid}>
+              {a.leader === 'player' ? 'You lead'
+                : myNext > state.funds ? 'Beyond your funds'
+                : `Bid ${money(myNext)}`}
+            </button>
+            <button className="ghost"
+              onClick={() => setState(E.passLot(state))}>
+              Pass this lot
+            </button>
+          </>
         ) : (
           <button onClick={onContinue}>
             {a.won ? 'Claim & Continue' : (isLast ? 'Conclude' : 'Next Lot')}
           </button>
         )}
       </div>
+      <div style={{ marginTop: 8, textAlign: 'center' }}>
+        <button className="ghost small"
+          onClick={() => setState(E.leaveAuction(state))}>
+          Leave the auction
+        </button>
+      </div>
     </div>
   );
 }
 
 /* ============================================================
-   SPECIALTIES TAB
+   SPECIALTIES (STYLES) TAB
    ============================================================ */
 function SpecialtiesTab({
   state, apply,
@@ -740,16 +1013,16 @@ function SpecialtiesTab({
   const chk = E.canResearch(state);
   return (
     <div className="panel">
-      <h2>Specialties<span className="sub">the fields you master</span></h2>
-      {state.specialties.map(sp => (
-        <div className="row" key={sp}>
+      <h2>Styles<span className="sub">the traditions you master</span></h2>
+      {state.specialties.map(st => (
+        <div className="row" key={st}>
           <div className="meta">
-            <div className="name">{CATEGORIES[sp].name}</div>
+            <div className="name">{STYLES[st].name}</div>
             <div className="info">
-              Events in this field come to your museum each week.
+              Events of this style come to your museum each week.
             </div>
           </div>
-          <div className="stars">{stars(state.expertise[sp])}</div>
+          <div className="stars">{stars(state.expertise[st] || 0)}</div>
         </div>
       ))}
       <div className="divider" />
@@ -757,7 +1030,7 @@ function SpecialtiesTab({
         <div className="row">
           <div className="meta">
             <div className="name">
-              Researching: {CATEGORIES[state.research.specialty].name}
+              Researching: {STYLES[state.research.style].name}
             </div>
             <div className="info">
               {state.research.weeksLeft} week(s) remaining. A room is reserved.
@@ -765,12 +1038,12 @@ function SpecialtiesTab({
           </div>
         </div>
       ) : !tier ? (
-        <p className="empty-note">Every specialty has been mastered.</p>
+        <p className="empty-note">Every style has been mastered.</p>
       ) : (
         <>
           <div className="row">
             <div className="meta">
-              <div className="name">Research a New Specialty</div>
+              <div className="name">Research a New Style</div>
               <div className="info">
                 Requires {tier.fameReq} fame, a {money(tier.fee)} fee, and an
                 open unassigned room. Takes 3–4 weeks.
@@ -778,13 +1051,13 @@ function SpecialtiesTab({
             </div>
           </div>
           {!chk.ok && <p className="empty-note">{chk.reason}</p>}
-          {CATEGORY_IDS.filter(c => !state.specialties.includes(c)).map(cid => (
-            <div className="row" key={cid}>
+          {STYLE_IDS.filter(s => !state.specialties.includes(s)).map(sid => (
+            <div className="row" key={sid}>
               <div className="meta">
-                <div className="name">{CATEGORIES[cid].name}</div>
+                <div className="name">{STYLES[sid].name}</div>
               </div>
               <button disabled={!chk.ok}
-                onClick={() => apply(E.startResearch(state, cid))}>
+                onClick={() => apply(E.startResearch(state, sid))}>
                 Research
               </button>
             </div>
@@ -796,7 +1069,7 @@ function SpecialtiesTab({
 }
 
 /* ============================================================
-   MANAGE TAB
+   MANAGE TAB — ticket price, advertising, sponsors
    ============================================================ */
 function ManageTab({
   state, setState, apply,
@@ -805,30 +1078,38 @@ function ManageTab({
   setState: (s: GameState) => void;
   apply: (r: { state: GameState; error?: string }) => void;
 }) {
+  const [priceInput, setPriceInput] = useState(String(state.ticket));
   const sponsors = E.availableSponsors(state);
   const building = BUILDINGS[state.buildingId];
   const freeHalls = building.halls.filter(h => !state.wingNames[h.id]);
   const [chosenHall, setChosenHall] = useState<string>(freeHalls[0]?.id || '');
+
+  // a live preview of visitors/revenue at the typed price
+  const preview = { ...state, ticket: parseInt(priceInput || '0', 10) };
 
   return (
     <>
       <div className="panel">
         <h2>Ticket Pricing<span className="sub">admission</span></h2>
         <p className="empty-note">
-          Lower prices draw more visitors; higher prices earn more per head.
+          Visitors follow demand: a high price on a thin collection draws
+          almost no one. The fair price rises as your museum grows.
         </p>
-        <div className="opt-row">
-          {(Object.keys(TICKET_PRICING) as TicketPrice[]).map(t => (
-            <div key={t}
-              className={'opt' + (state.ticket === t ? ' active' : '')}
-              onClick={() => setState(E.setTicket(state, t))}>
-              {TICKET_PRICING[t].label}
-            </div>
-          ))}
+        <div className="field" style={{ maxWidth: 180 }}>
+          <label>Ticket Price (§)</label>
+          <input value={priceInput} inputMode="numeric"
+            onChange={e => setPriceInput(e.target.value.replace(/[^0-9]/g, ''))} />
         </div>
         <div className="info" style={{ fontSize: 12, color: 'var(--ink-soft)' }}>
-          Now: {E.computeVisitors(state).toLocaleString()} visitors/week ·
-          {' '}{money(E.computeRevenue(state))} revenue/week
+          At §{preview.ticket}: ~{E.computeVisitors(preview).toLocaleString()} visitors/week ·
+          {' '}~{money(E.computeRevenue(preview))} revenue/week
+        </div>
+        <div style={{ marginTop: 10 }}>
+          <button
+            disabled={parseInt(priceInput || '0', 10) === state.ticket}
+            onClick={() => setState(E.setTicket(state, parseInt(priceInput || '0', 10)))}>
+            Set Price
+          </button>
         </div>
       </div>
 
@@ -918,73 +1199,179 @@ function ManageTab({
 }
 
 /* ============================================================
-   RECORDS TAB
+   COMPETITORS TAB — city & global rankings
    ============================================================ */
-function RecordsTab({ state }: { state: GameState }) {
+type RankRec = {
+  id: string; name: string; sub: string;
+  fame: number; quality: number; visitors: number;
+  you?: boolean;
+};
+
+function CompetitorsTab({ state }: { state: GameState }) {
+  const [scope, setScope] = useState<'city' | 'global'>('city');
+  const [metric, setMetric] = useState<'fame' | 'quality' | 'visitors'>('fame');
+
+  // build the rankable list
+  const you: RankRec = {
+    id: 'you', name: state.galleryName, sub: 'Your museum — Your City',
+    fame: state.fame, quality: E.museumQuality(state),
+    visitors: E.computeVisitors(state), you: true,
+  };
+  const rivalRecs: RankRec[] = state.rivals.map(r => ({
+    id: r.id, name: r.name, sub: 'Rival curator — Your City',
+    fame: r.fame, quality: r.quality, visitors: r.visitors,
+  }));
+  const staticRecs: RankRec[] = STATIC_MUSEUMS
+    .filter(m => scope === 'global' ? true : m.inYourCity)
+    .map(m => ({
+      id: m.id, name: m.name,
+      sub: `${m.tier[0].toUpperCase() + m.tier.slice(1)} · ${m.city}`,
+      fame: m.fame, quality: m.quality, visitors: m.visitors,
+    }));
+
+  const all = [you, ...rivalRecs, ...staticRecs];
+  all.sort((a, b) => b[metric] - a[metric]);
+  const myPos = all.findIndex(r => r.you) + 1;
+
   return (
     <div className="panel">
-      <h2>Records<span className="sub">the standing of your museum</span></h2>
-      <div className="row">
-        <div className="meta">
-          <div className="name">Standing</div>
-          <div className="info">
-            Your fame {state.fame} · quality {E.museumQuality(state)} —
-            rival fame {state.rivalFame} · quality {state.rivalQuality}
-          </div>
-        </div>
-        <div className="stars">
-          {E.ranking(state) === 1 ? 'Leading' : 'Trailing'}
-        </div>
+      <h2>Competitors<span className="sub">where you stand</span></h2>
+      <div className="rank-toggle">
+        <div className={'filter-chip' + (scope === 'city' ? ' active' : '')}
+          onClick={() => setScope('city')}>Your City</div>
+        <div className={'filter-chip' + (scope === 'global' ? ' active' : '')}
+          onClick={() => setScope('global')}>Global</div>
       </div>
-      <div className="row">
-        <div className="meta">
-          <div className="name">Collection</div>
-          <div className="info">
-            {state.owned.length} works held ·
-            {' '}{state.rooms.filter(E.roomIsFull).length} completed rooms
+      <div className="rank-toggle">
+        {(['fame', 'quality', 'visitors'] as const).map(m => (
+          <div key={m}
+            className={'filter-chip' + (metric === m ? ' active' : '')}
+            onClick={() => setMetric(m)}>
+            {m[0].toUpperCase() + m.slice(1)}
           </div>
-        </div>
+        ))}
       </div>
+      <p className="empty-note">
+        Ranked by {metric} — you are #{myPos} of {all.length}
+        {' '}{scope === 'city' ? 'in your city' : 'worldwide'}.
+      </p>
       <div className="divider" />
-      <div className="log">
-        {state.log.length === 0 ? (
-          <div className="empty-note">No records yet.</div>
-        ) : (
-          state.log.slice(0, 16).map((e, i) => (
-            <div key={i} className={'entry ' + e.kind}>{e.text}</div>
-          ))
-        )}
-      </div>
+      {all.map((r, i) => (
+        <div key={r.id} className={'rank-row' + (r.you ? ' you' : '')}>
+          <div className="rank-pos">{i + 1}</div>
+          <div className="rank-body">
+            <div className="rank-name">{r.name}</div>
+            <div className="rank-sub">{r.sub}</div>
+          </div>
+          <div className="rank-stat">
+            {r[metric].toLocaleString()}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
 
 /* ============================================================
-   END SCREEN
+   CODEX TAB — every artwork; unowned shown locked
    ============================================================ */
-function EndScreen({
-  state, onRestart,
+function CodexTab({
+  state, onArtifact,
 }: {
-  state: GameState; onRestart: () => void;
+  state: GameState;
+  onArtifact: (id: string) => void;
 }) {
-  const s = E.finalScore(state);
+  const [fRarity, setFRarity] = useState<string>('all');
+  const [fType, setFType] = useState<string>('all');
+  const [fStyle, setFStyle] = useState<string>('all');
+
+  const owned = new Set(state.owned);
+
+  const list = ARTIFACTS.filter(a => {
+    if (fRarity !== 'all' && rarityForScore(a.score).id !== fRarity) return false;
+    if (fType !== 'all' && a.type !== fType) return false;
+    if (fStyle !== 'all' && a.style !== fStyle) return false;
+    return true;
+  });
+
   return (
-    <div className="end-banner">
-      <h2>The Doors Close on Week 50</h2>
-      <div className="end-grade">{s.grade}</div>
-      <p>Final score: {s.score}</p>
-      <p>
-        {state.owned.length} works · {s.completeRooms} completed rooms ·
-        collection quality {s.quality}
+    <div className="panel">
+      <h2>The Codex<span className="sub">every known work</span></h2>
+      <p className="empty-note">
+        Works you have not acquired are catalogued but unidentified — only
+        their rarity, type and style are known.
       </p>
-      <p>
-        {s.rank === 1
-          ? 'You finished ahead of The Thorncrest Collection.'
-          : `The Thorncrest Collection finished ahead — ${state.rivalFame} fame to your ${state.fame}.`}
-      </p>
-      <button className="ghost" style={{ marginTop: 14 }} onClick={onRestart}>
-        Begin a New Museum
-      </button>
+
+      <div className="filter-group-label">Rarity</div>
+      <div className="filter-bar">
+        <Chip on={fRarity === 'all'} onClick={() => setFRarity('all')}>All</Chip>
+        {RARITY_BANDS.map(b => (
+          <Chip key={b.id} on={fRarity === b.id}
+            onClick={() => setFRarity(b.id)}>{b.name}</Chip>
+        ))}
+      </div>
+
+      <div className="filter-group-label">Type</div>
+      <div className="filter-bar">
+        <Chip on={fType === 'all'} onClick={() => setFType('all')}>All</Chip>
+        {ART_TYPES.map(t => (
+          <Chip key={t} on={fType === t} onClick={() => setFType(t)}>{t}</Chip>
+        ))}
+      </div>
+
+      <div className="filter-group-label">Style</div>
+      <div className="filter-bar">
+        <Chip on={fStyle === 'all'} onClick={() => setFStyle('all')}>All</Chip>
+        {STYLE_IDS.map(s => (
+          <Chip key={s} on={fStyle === s}
+            onClick={() => setFStyle(s)}>{STYLES[s].name}</Chip>
+        ))}
+      </div>
+
+      <div className="codex-count">
+        {list.length} work(s) · {list.filter(a => owned.has(a.id)).length} in your collection
+      </div>
+      <div>
+        {list.map(a => {
+          const isOwned = owned.has(a.id);
+          const band = rarityForScore(a.score);
+          return (
+            <div key={a.id} className="codex-row"
+              style={{ cursor: isOwned ? 'pointer' : 'default' }}
+              onClick={() => { if (isOwned) onArtifact(a.id); }}>
+              <div className="codex-id">{a.id}</div>
+              <div className="codex-body">
+                <div className={'codex-name' + (isOwned ? '' : ' locked')}>
+                  {isOwned ? a.name : '??????'}
+                </div>
+                <div className="codex-sub">
+                  {a.type} · {STYLES[a.style].name}
+                  {isOwned ? ` · ${a.year}` : ''}
+                </div>
+              </div>
+              <span className={'pill ' + band.cls}>{band.name}</span>
+            </div>
+          );
+        })}
+        {list.length === 0 && (
+          <p className="empty-note">No works match these filters.</p>
+        )}
+      </div>
     </div>
   );
 }
+function Chip({
+  on, onClick, children,
+}: {
+  on: boolean; onClick: () => void; children: React.ReactNode;
+}) {
+  return (
+    <span className={'filter-chip' + (on ? ' active' : '')} onClick={onClick}>
+      {children}
+    </span>
+  );
+}
+
+/* ============================================================
+   (End screen removed — play is open-ended, no week cap.)
+   ============================================================ */

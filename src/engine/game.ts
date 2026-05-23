@@ -1,18 +1,25 @@
 /* ============================================================
-   ENGINE — CORE  ( src/engine/ )
+   ENGINE — CORE  ( src/engine/ )  — STAGE 1 REWORK
    Pure game logic. State in -> new state out. No DOM, no React.
-   Every mutating function returns a fresh GameState (or a
-   { state, error } pair).
+
+   Key model changes from the old build:
+     * a museum specialises in a STYLE (not a category)
+     * three RIVAL PLAYERS share the city and grow each week
+     * weekly maintenance is a real EXPENSE line
+     * visitors follow a supply/demand curve of price vs quality
+     * phases: choose-specialty -> name-gallery -> playing -> ended
    ============================================================ */
 import type {
-  GameState, CategoryId, Room, GameEvent, Sponsor, TicketPrice, LogEntry,
+  GameState, StyleId, Room, GameEvent, Sponsor, LogEntry, RivalPlayer,
 } from '../data/types';
 import {
-  CATEGORIES, CATEGORY_IDS, BUILDINGS, BUILDING_ORDER, ROOM_CAPACITY,
-  RESEARCH_TIERS, TICKET_PRICING, AD_CAMPAIGN, START, rarityForScore,
+  STYLES, STYLE_IDS, BUILDINGS, BUILDING_ORDER, ROOM_CAPACITY,
+  RESEARCH_TIERS, AD_CAMPAIGN, START, RIVAL_NAMES, AUCTION_HOUSES,
+  rarityForScore,
 } from '../data/constants';
+import type { AuctionHouseDef } from '../data/constants';
 import { ARTIFACTS, ARTIFACT_BY_ID } from '../data/artifacts';
-import { randInt, money, uid } from './util';
+import { randInt, rand, money, uid } from './util';
 
 type Result = { state: GameState; error?: string };
 
@@ -33,29 +40,44 @@ export function makeRooms(buildingId: string): Room[] {
   return rooms;
 }
 
+/* --- the three rival players ------------------------------- */
+function makeRivals(): RivalPlayer[] {
+  return RIVAL_NAMES.map((name, i) => ({
+    id: 'rival' + i,
+    name,
+    fame: randInt(4, 12),
+    quality: randInt(20, 60),
+    visitors: randInt(80, 220),
+  }));
+}
+
 /* --- fresh game -------------------------------------------- */
 export function newGame(): GameState {
   return {
+    playerName: '',
+    galleryName: '',
     funds: START.funds,
     fame: 0,
     week: 1,
     specialties: [],
     research: null,
-    expertise: { renaissance: 0, egypt: 0, eastasia: 0, sculpture: 0 },
+    expertise: {},
     buildingId: 'local',
     rooms: makeRooms('local'),
     owned: [],
-    rivalFame: 8,
-    rivalQuality: 60,
+    rivals: makeRivals(),
     log: [],
     events: [],
     activeEvent: null,
     auction: null,
     pendingItemId: null,
-    ticket: 'standard',
+    ticket: START.defaultTicket,
     sponsors: [],
     wingNames: {},
     adWeeksLeft: 0,
+    lastRevenue: 0,
+    lastExpenses: 0,
+    joinedHouses: ['house1'],   // the free starter house is joined by default
     phase: 'choose-specialty',
   };
 }
@@ -63,15 +85,14 @@ export function newGame(): GameState {
 /* --- helpers ----------------------------------------------- */
 export const roomIsFull = (r: Room) => r.items.length >= ROOM_CAPACITY;
 export const roomReady = (r: Room) => r.unlocked && !r.researching;
-export const canPlace = (r: Room, cat: CategoryId) =>
-  roomReady(r) && r.theme === cat && !roomIsFull(r);
-export const hasOpenSlotFor = (s: GameState, cat: CategoryId) =>
-  s.rooms.some(r => canPlace(r, cat));
+export const canPlace = (r: Room, style: StyleId) =>
+  roomReady(r) && r.theme === style && !roomIsFull(r);
+export const hasOpenSlotFor = (s: GameState, style: StyleId) =>
+  s.rooms.some(r => canPlace(r, style));
 
 function logged(s: GameState, entry: LogEntry): GameState {
   return { ...s, log: [entry, ...s.log].slice(0, 60) };
 }
-/** deep-ish clone of the parts that get mutated together */
 function fork(s: GameState): GameState {
   return {
     ...s,
@@ -79,22 +100,79 @@ function fork(s: GameState): GameState {
     expertise: { ...s.expertise },
     specialties: [...s.specialties],
     owned: [...s.owned],
+    rivals: s.rivals.map(r => ({ ...r })),
     sponsors: s.sponsors.map(sp => ({ ...sp })),
     wingNames: { ...s.wingNames },
     log: [...s.log],
   };
 }
 
-/* --- founding specialty ------------------------------------ */
-export function chooseSpecialty(s: GameState, cat: CategoryId): GameState {
+/* --- founding specialty + naming --------------------------- */
+/** Pick the founding style. Moves to the name-gallery phase. */
+export function chooseSpecialty(s: GameState, style: StyleId): GameState {
   const next = fork(s);
-  next.specialties = [cat];
-  next.expertise[cat] = 0.5;
+  next.specialties = [style];
+  next.expertise[style] = 0.5;
+  next.phase = 'name-gallery';
+  const first = next.rooms.find(r => r.unlocked);
+  if (first) first.theme = style;
+  return next;
+}
+
+/** Three random Uncommon works offered as a founding acquisition.
+ *  The player picks one to lead their collection; its style becomes
+ *  the founding specialty. Uncommon (score 10-19) so the starter is
+ *  a real, named work rather than procedural filler. */
+export function foundingArtworkChoices(): string[] {
+  const pool = ARTIFACTS.filter(a => a.score >= 10 && a.score <= 19);
+  const out: string[] = [];
+  const avail = [...pool];
+  while (out.length < 3 && avail.length) {
+    out.push(avail.splice(Math.floor(Math.random() * avail.length), 1)[0].id);
+  }
+  return out;
+}
+
+/** Choose the founding artwork. The museum specialises in that
+ *  work's style, owns the work from the start, and moves to the
+ *  name-gallery phase. */
+export function chooseFoundingArtwork(s: GameState, artId: string): GameState {
+  const art = ARTIFACT_BY_ID[artId];
+  if (!art) return s;
+  const next = fork(s);
+  next.specialties = [art.style];
+  next.expertise[art.style] = 0.5;
+  next.owned = [artId];
+  next.pendingItemId = artId;          // placed during/after onboarding
+  next.phase = 'name-gallery';
+  const first = next.rooms.find(r => r.unlocked);
+  if (first) first.theme = art.style;
+  return next;
+}
+
+/** Name the gallery and set the opening ticket price; begin play.
+ *  The gallery name is permanent; the ticket changes later in Manage. */
+export function nameGallery(
+  s: GameState, playerName: string, galleryName: string, ticket: number,
+): GameState {
+  const next = fork(s);
+  next.playerName = playerName.trim() || 'Curator';
+  next.galleryName = galleryName.trim() || 'The New Gallery';
+  next.ticket = Math.max(0, Math.round(ticket));
   next.phase = 'playing';
   next.log = [{ kind: 'good',
-    text: `Founded as a ${CATEGORIES[cat].name} museum.` }];
-  const first = next.rooms.find(r => r.unlocked);
-  if (first) first.theme = cat;
+    text: `${next.galleryName} opens its doors — a ${STYLES[next.specialties[0]].name} gallery.` }];
+  // hang the founding artwork on the wall of the starter room
+  if (next.pendingItemId) {
+    const art = ARTIFACT_BY_ID[next.pendingItemId];
+    const room = next.rooms.find(r => canPlace(r, art.style));
+    if (room) {
+      room.items = [...room.items, art.id];
+      next.pendingItemId = null;
+      next.log.unshift({ kind: 'good',
+        text: `${art.name} takes pride of place as the founding work.` });
+    }
+  }
   next.events = rollEvents(next);
   return next;
 }
@@ -117,20 +195,20 @@ export function canResearch(s: GameState):
     return { ok: false, reason: 'Needs an open, unassigned room to host it.' };
   return { ok: true, hostRoomId: host.id };
 }
-export function startResearch(s: GameState, cat: CategoryId): Result {
+export function startResearch(s: GameState, style: StyleId): Result {
   const chk = canResearch(s);
   if (!chk.ok) return { state: s, error: chk.reason };
-  if (s.specialties.includes(cat))
+  if (s.specialties.includes(style))
     return { state: s, error: 'Already a specialty.' };
   const weeks = randInt(3, 4);
   const tier = researchTier(s)!;
   let next = fork(s);
   next.funds -= tier.fee;
-  next.research = { specialty: cat, weeksLeft: weeks };
+  next.research = { style, weeksLeft: weeks };
   next.rooms = next.rooms.map(r => r.id === chk.hostRoomId
-    ? { ...r, researching: { specialty: cat, weeksLeft: weeks } } : r);
+    ? { ...r, researching: { style, weeksLeft: weeks } } : r);
   next = logged(next, { kind: 'good',
-    text: `Began researching ${CATEGORIES[cat].name} (${weeks} weeks).` });
+    text: `Began researching ${STYLES[style].name} (${weeks} weeks).` });
   return { state: next };
 }
 
@@ -149,18 +227,18 @@ export function openRoom(s: GameState): Result {
   return { state: next };
 }
 export function assignRoom(
-  s: GameState, roomId: number, cat: CategoryId,
+  s: GameState, roomId: number, style: StyleId,
 ): Result {
-  if (!s.specialties.includes(cat))
+  if (!s.specialties.includes(style))
     return { state: s, error: 'That specialty is not unlocked.' };
   const room = s.rooms.find(r => r.id === roomId);
   if (!room || !room.unlocked || room.theme || room.researching)
     return { state: s, error: 'That room cannot be assigned.' };
   let next = fork(s);
   next.rooms = next.rooms.map(r =>
-    r.id === roomId ? { ...r, theme: cat } : r);
+    r.id === roomId ? { ...r, theme: style } : r);
   next = logged(next, { kind: 'good',
-    text: `Assigned ${CATEGORIES[cat].name} to a room.` });
+    text: `Assigned ${STYLES[style].name} to a room.` });
   return { state: next };
 }
 
@@ -175,44 +253,33 @@ export function moveToBuilding(s: GameState, buildingId: string): Result {
   if (s.funds < b.moveCost)
     return { state: s, error: `Moving costs ${money(b.moveCost)}.` };
   const rooms = makeRooms(buildingId);
-  // assign rooms to the player's specialties, then refill by theme
-  const byCat: Record<string, string[]> = {};
+  const byStyle: Record<string, string[]> = {};
   for (const id of s.owned) {
     const a = ARTIFACT_BY_ID[id];
-    (byCat[a.category] = byCat[a.category] || []).push(id);
+    (byStyle[a.style] = byStyle[a.style] || []).push(id);
   }
-  for (const cat of s.specialties) {
+  for (const style of s.specialties) {
     const room = rooms.find(r => r.unlocked && !r.theme);
-    if (room) room.theme = cat;
+    if (room) room.theme = style;
   }
   for (const room of rooms) {
     if (!room.unlocked || !room.theme) continue;
-    const q = byCat[room.theme] || [];
+    const q = byStyle[room.theme] || [];
     while (q.length && !roomIsFull(room)) room.items.push(q.shift()!);
   }
   let next = fork(s);
   next.funds -= b.moveCost;
   next.buildingId = buildingId;
   next.rooms = rooms;
-  next.wingNames = {};   // wing names reset with the new building
+  next.wingNames = {};
   next = logged(next, { kind: 'good',
     text: `Moved the collection to the ${b.name}.` });
   return { state: next };
 }
 
-/* --- weekly events ----------------------------------------- */
-const RARITY_SKEWS = {
-  modest: { label: 'mostly Common & Uncommon',
-    weights: [6, 4, 2, 0.6, 0.12, 0.02] },
-  fair: { label: 'Uncommon to Rare',
-    weights: [2, 4, 4, 1.6, 0.4, 0.06] },
-  fine: { label: 'Rare and finer',
-    weights: [0.4, 1.5, 4, 3, 1.2, 0.25] },
-};
-// weights index aligns with RARITY band order in constants
-
+/* --- weekly events: the auction houses --------------------- */
+/** rarity band index 0..5 (common..worldicon) for a score */
 function bandIndexForScore(score: number): number {
-  // 0 common .. 5 worldicon
   if (score >= 200) return 5;
   if (score >= 100) return 4;
   if (score >= 50) return 3;
@@ -221,26 +288,70 @@ function bandIndexForScore(score: number): number {
   return 0;
 }
 
-function buildEvent(s: GameState, cat: CategoryId): GameEvent | null {
-  const starsHere = s.expertise[cat] || 0;
-  const skewId = starsHere >= 3 ? (Math.random() < 0.5 ? 'fine' : 'fair')
-    : starsHere >= 1.5 ? (Math.random() < 0.6 ? 'fair' : 'modest')
-    : (Math.random() < 0.8 ? 'modest' : 'fair');
-  const skew = RARITY_SKEWS[skewId as keyof typeof RARITY_SKEWS];
+/** which houses the player can currently SEE (fame-unlocked) */
+export function unlockedHouses(s: GameState): AuctionHouseDef[] {
+  return AUCTION_HOUSES.filter(h => s.fame >= h.fameToUnlock);
+}
+/** houses the player has actually JOINED (paid the join fee) */
+export function joinedHouses(s: GameState): AuctionHouseDef[] {
+  return AUCTION_HOUSES.filter(h => s.joinedHouses.includes(h.id));
+}
+/** pay the one-time join fee for a house */
+export function joinHouse(s: GameState, houseId: string): Result {
+  const h = AUCTION_HOUSES.find(x => x.id === houseId);
+  if (!h) return { state: s, error: 'Unknown auction house.' };
+  if (s.joinedHouses.includes(houseId))
+    return { state: s, error: 'Already a member of that house.' };
+  if (s.fame < h.fameToUnlock)
+    return { state: s, error: `That house opens at ${h.fameToUnlock} fame.` };
+  if (s.funds < h.joinFee)
+    return { state: s, error: `Joining costs ${money(h.joinFee)}.` };
+  let next = fork(s);
+  next.funds -= h.joinFee;
+  next.joinedHouses = [...next.joinedHouses, houseId];
+  next = logged(next, { kind: 'good',
+    text: `Joined ${h.name}${h.joinFee > 0 ? ` for ${money(h.joinFee)}` : ''}.` });
+  return { state: next };
+}
 
-  const isDonation = Math.random() < 0.36;
-  const count = isDonation ? randInt(2, 3) : randInt(2, 5);
+const RARITY_NAMES = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legend'];
+function houseSkewLabel(h: AuctionHouseDef): string {
+  // name the two heaviest bands the house offers
+  const ranked = h.rarityWeights
+    .map((w, i) => ({ w, i }))
+    .filter(x => x.w > 0)
+    .sort((a, b) => b.w - a.w);
+  const top = ranked.slice(0, 2).map(x => RARITY_NAMES[x.i]);
+  return `mostly ${top.join(' & ')}`;
+}
 
-  const pool = ARTIFACTS.filter(
-    a => a.category === cat && !s.owned.includes(a.id));
+/** Build one auction for a given house. Lots are drawn with the
+ *  house's rarity weights, and skewed toward the player's unlocked
+ *  styles so themed rooms can still be filled. World Icons (band 5)
+ *  are never offered. */
+function buildHouseAuction(s: GameState, h: AuctionHouseDef): GameEvent | null {
+  // candidate pool: not owned, not a World Icon, and the house
+  // must actually offer that rarity band (weight > 0).
+  const styleSet = new Set(s.specialties);
+  const pool = ARTIFACTS.filter(a => {
+    if (s.owned.includes(a.id)) return false;
+    const band = bandIndexForScore(a.score);
+    if (band >= 5) return false;                 // never auction World Icons
+    return h.rarityWeights[band] > 0;
+  });
   if (pool.length === 0) return null;
 
+  const count = randInt(3, 5);
   const avail = [...pool];
   const lots: string[] = [];
   for (let i = 0; i < count && avail.length; i++) {
-    const weighted = avail.map(a => ({
-      a, w: skew.weights[bandIndexForScore(a.score)] || 0.05,
-    }));
+    const weighted = avail.map(a => {
+      const band = bandIndexForScore(a.score);
+      let w = h.rarityWeights[band] || 0.01;
+      // favour the player's unlocked styles ~3x so rooms are fillable
+      if (styleSet.has(a.style)) w *= 3;
+      return { a, w };
+    });
     const total = weighted.reduce((acc, x) => acc + x.w, 0);
     let r = Math.random() * total;
     let chosen = weighted[weighted.length - 1].a;
@@ -252,26 +363,24 @@ function buildEvent(s: GameState, cat: CategoryId): GameEvent | null {
 
   return {
     id: uid('ev'),
-    kind: isDonation ? 'donation' : 'auction',
-    category: cat,
-    skewLabel: skew.label,
-    fee: isDonation ? START.attendFeeDonation : START.attendFeeAuction,
+    kind: 'auction',
+    houseId: h.id,
+    house: h.name,
+    skewLabel: houseSkewLabel(h),
+    fee: h.attendFee,
     lotIds: lots,
-    house: isDonation
-      ? `${CATEGORIES[cat].name} estate donation`
-      : `${CATEGORIES[cat].name} auction`,
   };
 }
 
-/** Roll this week's events. Each unlocked specialty independently
- *  rolls a chance of one event — so a week may have none, one, or
- *  several, capped at maxEventsPerWeek. */
+/** Each week, every JOINED house may hold a sale. */
 export function rollEvents(s: GameState): GameEvent[] {
   const events: GameEvent[] = [];
-  for (const cat of s.specialties) {
+  for (const h of joinedHouses(s)) {
     if (events.length >= START.maxEventsPerWeek) break;
-    if (Math.random() <= START.eventChancePerSpecialty) {
-      const ev = buildEvent(s, cat);
+    // the humble house holds sales often; grander houses less so
+    const chance = h.id === 'house1' ? 0.8 : h.id === 'house2' ? 0.6 : 0.45;
+    if (Math.random() <= chance) {
+      const ev = buildHouseAuction(s, h);
       if (ev) events.push(ev);
     }
   }
@@ -286,14 +395,36 @@ export function attendEvent(s: GameState, eventId: string): Result {
     return { state: s, error: 'Not enough funds for the attendance fee.' };
   let next = fork(s);
   next.funds -= ev.fee;
-  next.activeEvent = { ...ev, attended: true, lotIndex: 0, acquired: [] };
+  next.activeEvent = { ...ev, attended: true, lotIndex: 0, acquired: [], passed: [] };
   next.events = next.events.filter(e => e.id !== eventId);
   next = logged(next, { kind: 'good',
-    text: `Attended the ${ev.house} (fee ${money(ev.fee)}).` });
+    text: `Attended a sale at ${ev.house}${ev.fee > 0 ? ` (fee ${money(ev.fee)})` : ''}.` });
   return { state: next };
 }
 
-/** Resolve a finished lot: bank a win, advance lotIndex. */
+/** Skip the current lot without bidding — advance to the next. */
+export function passLot(s: GameState): GameState {
+  const ev = s.activeEvent;
+  if (!ev) return s;
+  let next = fork(s);
+  const art = ARTIFACT_BY_ID[ev.lotIds[ev.lotIndex || 0]];
+  next.activeEvent = {
+    ...ev,
+    passed: [...(ev.passed || []), art.id],
+    lotIndex: (ev.lotIndex || 0) + 1,
+  };
+  next.auction = null;
+  return next;
+}
+
+/** Leave the auction entirely, forfeiting any remaining lots. */
+export function leaveAuction(s: GameState): GameState {
+  let next = fork(s);
+  next.activeEvent = null;
+  next.auction = null;
+  return next;
+}
+
 export function finishLot(s: GameState): GameState {
   const a = s.auction!;
   const ev = s.activeEvent!;
@@ -307,11 +438,10 @@ export function finishLot(s: GameState): GameState {
     next.owned.push(art.id);
     next.activeEvent.acquired!.push(art.id);
     next.pendingItemId = art.id;
-    // fame from a win scales with the artifact's score
     const fameGain = Math.max(1, Math.round(art.score * 0.25));
     next.fame += fameGain;
-    next.expertise[art.category] = Math.min(5,
-      +(next.expertise[art.category] + 0.2 + art.score / 500).toFixed(2));
+    next.expertise[art.style] = Math.min(5,
+      +(((next.expertise[art.style] || 0) + 0.2 + art.score / 500)).toFixed(2));
     next = logged(next, { kind: 'good',
       text: `Acquired ${art.name} for ${money(a.currentBid)}. +${fameGain} fame.` });
   } else {
@@ -332,15 +462,14 @@ export function placeArtifact(s: GameState, roomId: number): Result {
   const art = s.pendingItemId ? ARTIFACT_BY_ID[s.pendingItemId] : null;
   if (!art) return { state: s, error: 'No artifact to place.' };
   const room = s.rooms.find(r => r.id === roomId);
-  if (!room || !canPlace(room, art.category))
+  if (!room || !canPlace(room, art.style))
     return { state: s, error: 'That room cannot take this work.' };
   let next = fork(s);
   next.rooms = next.rooms.map(r =>
     r.id === roomId ? { ...r, items: [...r.items, art.id] } : r);
   next.pendingItemId = null;
   next = logged(next, { kind: 'good',
-    text: `Placed ${art.name} in a ${CATEGORIES[art.category].name} room.` });
-  // room completion: a milestone bonus scaled by the works inside
+    text: `Placed ${art.name} in a ${STYLES[art.style].name} room.` });
   const filled = next.rooms.find(r => r.id === roomId)!;
   if (roomIsFull(filled)) {
     const quality = filled.items.reduce(
@@ -348,33 +477,29 @@ export function placeArtifact(s: GameState, roomId: number): Result {
     const bonus = 20 + Math.round(quality * 0.18);
     next.fame += bonus;
     next = logged(next, { kind: 'good',
-      text: `Completed a ${CATEGORIES[filled.theme!].name} room — +${bonus} fame.` });
+      text: `Completed a ${STYLES[filled.theme!].name} room — +${bonus} fame.` });
   }
   return { state: next };
 }
 
 /* --- management: tickets, sponsors, advertising ------------ */
-export function setTicket(s: GameState, t: TicketPrice): GameState {
+/** Set the ticket price (any currency amount). Changeable any time. */
+export function setTicket(s: GameState, price: number): GameState {
   let next = fork(s);
-  next.ticket = t;
+  next.ticket = Math.max(0, Math.round(price));
   next = logged(next, { kind: 'note',
-    text: `Ticket price set to ${TICKET_PRICING[t].label}.` });
+    text: `Ticket price set to ${money(next.ticket)}.` });
   return next;
 }
 
-/** A roster of sponsors who may be courted. Offered ones depend
- *  on fame; each gives a one-off gift and a small weekly fame. */
 export function availableSponsors(s: GameState): Sponsor[] {
   const roster: Sponsor[] = [
-    { id: 'merchant', name: 'The Aldermoor Trust', gift: 800, weeklyBonus: 1, wingNamed: null },
-    { id: 'banker',   name: 'House of Castellan',  gift: 1800, weeklyBonus: 2, wingNamed: null },
-    { id: 'magnate',  name: 'The Verrane Endowment',gift: 3600, weeklyBonus: 4, wingNamed: null },
+    { id: 'merchant', name: 'The Aldermoor Trust',   gift: 800,  weeklyBonus: 1, wingNamed: null },
+    { id: 'banker',   name: 'House of Castellan',    gift: 1800, weeklyBonus: 2, wingNamed: null },
+    { id: 'magnate',  name: 'The Verrane Endowment', gift: 3600, weeklyBonus: 4, wingNamed: null },
   ];
   const have = new Set(s.sponsors.map(sp => sp.id));
-  // gate by fame so bigger sponsors arrive later
-  const fameGate: Record<string, number> = {
-    merchant: 0, banker: 35, magnate: 90,
-  };
+  const fameGate: Record<string, number> = { merchant: 0, banker: 35, magnate: 90 };
   return roster.filter(r => !have.has(r.id) && s.fame >= fameGate[r.id]);
 }
 
@@ -418,32 +543,104 @@ export function museumQuality(s: GameState): number {
   return q;
 }
 
-export function computeVisitors(s: GameState): number {
-  const prestige = BUILDINGS[s.buildingId].prestige;
-  const ticket = TICKET_PRICING[s.ticket];
-  let v = 40 + s.fame * 5 + museumQuality(s) * 0.4;
-  for (const room of s.rooms) {
-    if (room.items.length === 0) continue;
-    v += room.items.length * 4
-      + (room.items.length / ROOM_CAPACITY) * 18;
+/** placed-artifact count */
+export function placedCount(s: GameState): number {
+  return s.rooms.reduce((n, r) => n + r.items.length, 0);
+}
+
+/* --- VISITORS: an incremental, diminishing-returns model ----
+   Each artwork on display draws its own small crowd of DAILY
+   visitors, scaled by quality (score) and type. Successive works
+   add less than the first — the 2nd ~80%, 3rd ~65%, and so on —
+   so three Commons draw roughly twelve extra a day, not fifteen.
+   Per-week takings then carry weekly noise.
+
+   BALANCE ANCHORS (tuned to the design brief):
+     * 0 items  -> 0 visitors
+     * the starter Uncommon  -> revenue roughly covers upkeep
+     * each added Common     -> ~5 extra visitors/day at first,
+       repaying a ~2-4k Common in about ten weeks, faster as the
+       collection grows
+   Daily-visitor scale, by ambition: a strong local museum tops out
+   around 500/day; regional and national institutions far beyond. */
+
+const TYPE_DRAW: Record<string, number> = {
+  Painting: 1.15, Sculpture: 1.05, Object: 0.95, Manuscript: 0.85,
+};
+
+/** per-artwork DAILY visitor pull, before diminishing returns.
+ *  A score-0 Common pulls a handful a day; an Uncommon noticeably
+ *  more; a Legend draws a real crowd. Type nudges it a little. */
+function artifactDailyDraw(id: string): number {
+  const a = ARTIFACT_BY_ID[id];
+  const typeMult = TYPE_DRAW[a.type] ?? 1;
+  // base 4/day + score scaling; Common ~4-7, Uncommon ~9-13,
+  // Rare ~15-28, Epic/Legend climbing well past that.
+  return (4 + a.score * 0.85) * typeMult;
+}
+
+/** the museum's expected DAILY visitors — incremental with
+ *  diminishing returns on each successive (lower-ranked) work. */
+export function dailyVisitors(s: GameState): number {
+  const draws: number[] = [];
+  for (const r of s.rooms)
+    for (const id of r.items) draws.push(artifactDailyDraw(id));
+  if (draws.length === 0) return 0;
+
+  // best pieces count fullest; each next piece is worth a little
+  // less — the 2nd ~85%, 3rd ~72%, 4th ~61% — so three Commons add
+  // roughly twelve a day rather than fifteen.
+  draws.sort((a, b) => b - a);
+  let total = 0;
+  for (let i = 0; i < draws.length; i++) {
+    const dimin = Math.max(0.5, Math.pow(0.85, i));
+    total += draws[i] * dimin;
   }
-  v *= prestige * ticket.visitorMult;
-  if (s.adWeeksLeft > 0) v *= AD_CAMPAIGN.visitorMult;
-  return Math.round(v);
+  // fame and completed rooms lift the daily figure too
+  total += s.fame * 0.5;
+  total += s.rooms.filter(roomIsFull).length * 7;
+  return total * BUILDINGS[s.buildingId].prestige;
 }
 
+/** weekly visitors — six open days, shaped by ticket-price demand
+ *  and weekly noise. Higher prices suppress demand past a fair
+ *  point that itself rises with how strong the museum is. */
+export function computeVisitors(s: GameState): number {
+  const perDay = dailyVisitors(s);
+  if (perDay <= 0) return 0;
+
+  // a fair admission rises only gently with the museum's draw, so
+  // adding works grows visitors rather than throttling them.
+  const fairPrice = 7 + perDay / 70;
+  const ratio = s.ticket / Math.max(1, fairPrice);
+  let demandMult: number;
+  if (ratio <= 1) demandMult = 1.12 - ratio * 0.12;     // 1.12 .. 1.0
+  else demandMult = Math.exp(-(ratio - 1) * 1.05);      // softer falloff
+
+  let weekly = perDay * 6 * demandMult;                 // six open days
+  if (s.adWeeksLeft > 0) weekly *= AD_CAMPAIGN.visitorMult;
+  weekly *= rand(0.85, 1.15);                           // weekly noise
+  return Math.max(0, Math.round(weekly));
+}
+
+/* weekly revenue. Effective take per visitor is the ticket plus a
+   gift-shop / extras fraction — about §3 on top of a typical §5
+   ticket. Tuned so the starter Uncommon roughly meets upkeep and
+   each cheap Common pays itself back over about ten weeks. */
 export function computeRevenue(s: GameState): number {
-  const ticket = TICKET_PRICING[s.ticket];
   const visitors = computeVisitors(s);
-  // gift-shop floor so a free museum still earns a little
-  return Math.round(visitors * ticket.revenuePerVisitor + visitors * 0.25);
+  return Math.round(visitors * (s.ticket + 3));
 }
 
-export function ranking(s: GameState): 1 | 2 {
-  // ranked on fame + quality combined against the rival
-  const mine = s.fame + museumQuality(s) * 0.5;
-  const theirs = s.rivalFame + s.rivalQuality * 0.5;
-  return mine >= theirs ? 1 : 2;
+/** weekly expenses = building maintenance (the expense line) */
+export function computeExpenses(s: GameState): number {
+  return BUILDINGS[s.buildingId].maintenance;
+}
+
+/* --- rankings ---------------------------------------------- */
+/** the player as a rankable museum-like record */
+export function playerVisitorsEstimate(s: GameState): number {
+  return computeVisitors(s);
 }
 
 /* --- advance one week -------------------------------------- */
@@ -454,15 +651,15 @@ export function advanceWeek(s: GameState): GameState {
   if (next.research) {
     const left = next.research.weeksLeft - 1;
     if (left <= 0) {
-      const sp = next.research.specialty;
+      const sp = next.research.style;
       next.specialties.push(sp);
-      next.expertise[sp] = Math.max(next.expertise[sp], 0.5);
+      next.expertise[sp] = Math.max(next.expertise[sp] || 0, 0.5);
       next.rooms = next.rooms.map(r =>
-        r.researching && r.researching.specialty === sp
+        r.researching && r.researching.style === sp
           ? { ...r, researching: null, theme: sp } : r);
       next.research = null;
       next = logged(next, { kind: 'good',
-        text: `Research complete — ${CATEGORIES[sp].name} is now a specialty.` });
+        text: `Research complete — ${STYLES[sp].name} is now a specialty.` });
     } else {
       next.research = { ...next.research, weeksLeft: left };
       next.rooms = next.rooms.map(r => r.researching
@@ -471,40 +668,59 @@ export function advanceWeek(s: GameState): GameState {
   }
 
   // sponsor weekly fame
-  const sponsorFame = next.sponsors.reduce((acc, sp) => acc + sp.weeklyBonus, 0);
-  next.fame += sponsorFame;
+  next.fame += next.sponsors.reduce((acc, sp) => acc + sp.weeklyBonus, 0);
 
-  // economy
-  next.funds += computeRevenue(next);
+  // economy: revenue in, expenses out — both recorded for display
+  const revenue = computeRevenue(next);
+  const expenses = computeExpenses(next);
+  next.funds += revenue - expenses;
+  next.lastRevenue = revenue;
+  next.lastExpenses = expenses;
+  if (revenue - expenses < 0) {
+    next = logged(next, { kind: 'bad',
+      text: `A lean week: ${money(revenue)} earned, ${money(expenses)} in upkeep.` });
+  }
 
   // advertising countdown
   if (next.adWeeksLeft > 0) next.adWeeksLeft -= 1;
 
-  // rival grows — calibrated against a 50-week museum that can
-  // reach several hundred fame, so it stays a visible competitor.
-  const lead = next.rivalFame - next.fame;
-  const rg = lead > 60 ? randInt(1, 3)
-    : lead > 0 ? randInt(4, 7)
-    : randInt(6, 11);
-  next.rivalFame += rg;
-  next.rivalQuality += randInt(5, 12);
+  // the three rival players grow each week
+  next.rivals = next.rivals.map(r => {
+    const lead = r.fame - next.fame;
+    const fg = lead > 50 ? randInt(0, 2)
+      : lead > 0 ? randInt(2, 5)
+      : randInt(3, 7);
+    return {
+      ...r,
+      fame: r.fame + fg,
+      quality: r.quality + randInt(3, 9),
+      visitors: Math.max(0, r.visitors + randInt(-40, 120)),
+    };
+  });
 
   next.week += 1;
   next.events = [];
   next.activeEvent = null;
   next.auction = null;
 
-  if (next.week > START.totalWeeks) {
-    next.phase = 'ended';
-    return next;
+  // open-ended play — no week cap. Detect newly unlocked auction
+  // houses and announce them.
+  for (const h of AUCTION_HOUSES) {
+    if (next.fame >= h.fameToUnlock && h.fameToUnlock > 0
+        && !next.joinedHouses.includes(h.id)
+        && s.fame < h.fameToUnlock) {
+      next = logged(next, { kind: 'good',
+        text: `Your fame opens the doors of ${h.name} — join it from the Week tab.` });
+    }
   }
+
   next.events = rollEvents(next);
   return next;
 }
 
 /* --- final score ------------------------------------------- */
 export interface FinalScore {
-  score: number; grade: string; rank: 1 | 2;
+  score: number; grade: string;
   quality: number; completeRooms: number; collValue: number;
 }
 export function finalScore(s: GameState): FinalScore {
@@ -520,9 +736,9 @@ export function finalScore(s: GameState): FinalScore {
   else if (score >= 3000) grade = 'A Respected Institution';
   else if (score >= 1200) grade = 'A Promising Gallery';
   else grade = 'A Modest Beginning';
-  return { score, grade, rank: ranking(s), quality, completeRooms, collValue };
+  return { score, grade, quality, completeRooms, collValue };
 }
 
 /* re-exports the UI leans on */
-export { CATEGORIES, CATEGORY_IDS, BUILDINGS, rarityForScore };
+export { STYLES, STYLE_IDS, BUILDINGS, rarityForScore };
 export { BUILDING_ORDER as BUILDING_ORDER_PUBLIC } from '../data/constants';
