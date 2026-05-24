@@ -259,11 +259,14 @@ export interface GameState {
   shards: ShardBank;              // banked expedition shards by tier:style
   galaPending: boolean;           // a gala is on offer this week
   blackMarketPending: boolean;    // a black-market offer is available
-  // black-market pieces: which owned ids are still unanalyzed
-  // (with the price paid, for the forgery fine), and — hidden from
-  // the player until analyzed — which of those are forgeries.
-  unanalyzed: { artifactId: string; pricePaid: number }[];
-  forgeries: string[];
+  // black-market pieces that owe money: works bought "altered" owe
+  // a restoration fee before they may be exhibited; works found
+  // stolen owe a declaration fee to be kept legally. Each maps an
+  // owned artifact id to the amount owed.
+  restorationOwed: Record<string, number>;
+  stolenUndeclared: Record<string, number>;
+  // owned ids that are salvage-only (forgeries) — cannot exhibit
+  salvageOnly: string[];
   phase: Phase;
 }
 

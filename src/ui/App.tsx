@@ -223,8 +223,8 @@ function Game({
   } else if (blackMarketOpen) {
     body = (
       <BlackMarketScreen state={state}
-        onBuy={(artId, price, isReal, truthKnown) => {
-          apply(E.buyBlackMarket(state, artId, price, isReal, truthKnown));
+        onBuy={(artId, outcome) => {
+          apply(E.buyBlackMarket(state, artId, outcome));
         }}
         onClose={() => {
           setRawState(s => ({ ...s, blackMarketPending: false }));
@@ -909,14 +909,17 @@ function GalleriesTab({
                 const ini = art.name.split(/\s+/)
                   .filter(w => /[A-Za-z]/.test(w))
                   .slice(0, 2).map(w => w[0].toUpperCase()).join('');
-                const unanalyzed = state.unanalyzed.some(
-                  u => u.artifactId === id);
+                const restoreOwed = state.restorationOwed[id];
+                const declareOwed = state.stolenUndeclared[id];
+                const isSalvage = state.salvageOnly.includes(id);
+                const flagged = !!restoreOwed || !!declareOwed || isSalvage;
                 return (
                   <div key={id}
                     className={'acq' + (heldArt === id ? ' selected' : '')
-                      + (unanalyzed ? ' unanalyzed' : '')}
-                    draggable
+                      + (flagged ? ' unanalyzed' : '')}
+                    draggable={!flagged}
                     onDragStart={e => {
+                      if (flagged) { e.preventDefault(); return; }
                       e.dataTransfer.setData('text/plain', id);
                       setHeldArt(id);
                     }}
@@ -933,18 +936,36 @@ function GalleriesTab({
                         <span className={'pill ' + band.cls}>{band.name}</span>
                         <span className="acq-meta">{art.year}</span>
                       </div>
-                      {unanalyzed && (
+                      {isSalvage && (
                         <div className="acq-unverified">
-                          Authenticity not confirmed
+                          Forgery — cannot be exhibited
                         </div>
                       )}
-                      {unanalyzed ? (
+                      {restoreOwed && (
+                        <div className="acq-unverified">
+                          Altered — restore before exhibiting
+                        </div>
+                      )}
+                      {declareOwed && (
+                        <div className="acq-unverified">
+                          Stolen — must be declared
+                        </div>
+                      )}
+                      {restoreOwed ? (
                         <button className="ghost small acq-sell"
                           onClick={e => {
                             e.stopPropagation();
-                            apply(E.analyzeArtifact(state, id));
+                            apply(E.payRestoration(state, id));
                           }}>
-                          Analyse · {money(E.analysisFee(id))}
+                          Restore · {money(restoreOwed)}
+                        </button>
+                      ) : declareOwed ? (
+                        <button className="ghost small acq-sell"
+                          onClick={e => {
+                            e.stopPropagation();
+                            apply(E.declareStolen(state, id));
+                          }}>
+                          Report &amp; Declare · {money(declareOwed)}
                         </button>
                       ) : (
                         <button className="ghost small acq-sell"
@@ -2175,152 +2196,240 @@ function BlackMarketScreen({
   state, onBuy, onClose,
 }: {
   state: GameState;
-  onBuy: (artId: string, price: number, isReal: boolean,
-    truthKnown: boolean) => void;
+  onBuy: (artId: string, outcome: BM.PurchaseOutcome) => void;
   onClose: () => void;
 }) {
   const [offer] = useState<BM.BlackMarketOffer>(
     () => BM.makeBlackMarketOffer(state.specialties));
-  const [points, setPoints] = useState<BM.ExamPoint[]>(
-    () => BM.makeExamPoints(offer));
-  const [phase, setPhase] = useState<
-    'intro' | 'examining' | 'verdict' | 'inspected'>('intro');
-  const [authenticated, setAuthenticated] = useState(false);
-  const [inspected, setInspected] = useState(false);
+  const [results, setResults] = useState<BM.ActionResult[]>([]);
+  const [patience, setPatience] = useState(offer.patience);
+  const [turnsUsed, setTurnsUsed] = useState(0);
+  const [guess, setGuess] = useState<BM.Verdict | ''>('');
+  const [phase, setPhase] = useState<'intro' | 'research' | 'done'>('intro');
+  const [askPrice, setAskPrice] = useState(offer.ask);
+  const [dealerLine, setDealerLine] = useState('');
+  const [guessedRight, setGuessedRight] = useState<boolean | null>(null);
+  const [outcome, setOutcome] = useState<BM.PurchaseOutcome | null>(null);
 
   const art = ARTIFACT_BY_ID[offer.artifactId];
-  const allJudged = points.every(p => p.judged !== null);
-  const fee = BM.inspectionFee(offer);
+  const turnsLeft = offer.researchTurns - turnsUsed;
+  const canResearch = turnsLeft > 0 && patience > 0;
 
-  // --- intro -------------------------------------------------
+  const dealerReactions = [
+    'The dealer drums his fingers. "Another buyer is interested, you know."',
+    '"I have not got all evening," he mutters, glancing at the door.',
+    '"Test it all you like. The price does not improve with waiting."',
+    'He lights a cigarette. "Cash today, or not at all."',
+    '"One more look. Then you decide — yes or no."',
+  ];
+
+  const doAction = (actionId: string) => {
+    const def = BM.ACTIONS.find(a => a.id === actionId)!;
+    if (!canResearch) return;
+    if (state.funds < def.cost) return;
+    const res = BM.runAction(offer, actionId);
+    setResults(r => [...r, res]);
+    setTurnsUsed(n => n + 1);
+    const newPat = patience - 1;
+    setPatience(newPat);
+    setDealerLine(newPat <= 0
+      ? '"Enough. Decide now — I am done waiting."'
+      : dealerReactions[Math.floor(Math.random() * dealerReactions.length)]);
+  };
+
+  const resolveGuess = (asStolen: boolean) => {
+    const right = guess === offer.verdict;
+    setGuessedRight(right);
+    const o = BM.purchaseOutcome(offer,
+      asStolen && offer.verdict === 'stolen' ? offer.stolenPrice : askPrice);
+    setOutcome(o);
+    setPhase('done');
+  };
+
+  const negotiate = () => {
+    // haggle: the dealer may cut the ask, or refuse and lose patience
+    if (Math.random() < 0.55) {
+      const cut = Math.round(askPrice * (0.1 + Math.random() * 0.15));
+      setAskPrice(p => Math.max(1, p - cut));
+      setDealerLine(`"...Fine. ${money(cut)} off. Not a penny more."`);
+    } else {
+      setPatience(p => Math.max(0, p - 1));
+      setDealerLine('"My price is my price." He looks annoyed.');
+    }
+  };
+
+  // --- intro ---------------------------------------------------
   if (phase === 'intro') {
     return (
       <div className="panel">
         <h2>A Discreet Offer<span className="sub">the black market</span></h2>
         <div className="auction-art">
-          <Thumb artifact={art} size="lg" />
-          <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 20 }}>
-            {art.name}
-          </div>
-          <div className="bid-line">
-            {art.type} · {STYLES[art.style].name} · {art.year}
-          </div>
-          <div><RarityPill score={art.score} /></div>
+          <div className="auction-art-icon">{typeIcon(art.type)}</div>
         </div>
+        <h3 style={{ fontSize: 22, margin: '10px 0 2px' }}>{art.name}</h3>
         <p className="empty-note">
-          A seller offers what is presented as a {rarityForScore(art.score).name}
-          {' '}work for just <b>{money(offer.askingPrice)}</b> — far below its
-          rarity. It may be the find of the year, or a clever forgery.
+          The dealer claims a {STYLES[offer.claimedStyle].name} piece — "{art.type},
+          and no questions asked." He wants {money(offer.ask)}. It could be a
+          genuine bargain, a clever fake, or something that ought not be sold
+          at all.
         </p>
         <p className="empty-note">
-          You may examine it first. Judge the examination points correctly
-          and you will know the truth before you decide.
+          You may run {offer.researchTurns} research actions before deciding.
+          Each costs money and tries the dealer's patience — push too far and
+          he walks. From the evidence, name the one verdict that fits.
         </p>
         <div className="divider" />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => setPhase('examining')}>Examine the Piece</button>
+          <button onClick={() => setPhase('research')}>Examine the Piece</button>
           <button className="ghost" onClick={onClose}>Walk Away</button>
         </div>
       </div>
     );
   }
 
-  // --- examining: judge each point ---------------------------
-  if (phase === 'examining') {
+  // --- done ----------------------------------------------------
+  if (phase === 'done' && outcome) {
+    const vdef = BM.VERDICTS.find(v => v.id === outcome.verdict)!;
     return (
       <div className="panel">
-        <h2>Authentication
-          <span className="sub">judge each examination point</span></h2>
-        <p className="drag-hint">
-          For each point, call it consistent with a genuine work, or
-          suspicious. Get at least four of five right to authenticate.
-        </p>
-        <div className="exam-list">
-          {points.map(p => (
-            <div className="exam-point" key={p.id}>
-              <div className="exam-label">{p.label}</div>
-              <div className="exam-buttons">
-                <button
-                  className={'exam-btn'
-                    + (p.judged === 'consistent' ? ' picked' : '')}
-                  onClick={() => setPoints(pts => pts.map(x =>
-                    x.id === p.id ? { ...x, judged: 'consistent' } : x))}>
-                  Consistent
-                </button>
-                <button
-                  className={'exam-btn'
-                    + (p.judged === 'suspicious' ? ' picked' : '')}
-                  onClick={() => setPoints(pts => pts.map(x =>
-                    x.id === p.id ? { ...x, judged: 'suspicious' } : x))}>
-                  Suspicious
-                </button>
-              </div>
-            </div>
-          ))}
+        <h2>The Deal<span className="sub">{art.name}</span></h2>
+        {guessedRight !== null && (
+          <p className={'bm-callout ' + (guessedRight ? 'right' : 'wrong')}>
+            {guessedRight
+              ? 'Your deduction was correct.'
+              : '"That is not what this is," the dealer says flatly. You were wrong.'}
+          </p>
+        )}
+        <div className="bm-verdict-box">
+          <div className="bm-verdict-title">{vdef.label}</div>
+          <div className="bm-verdict-blurb">{vdef.blurb}</div>
         </div>
         <div className="divider" />
-        <button disabled={!allJudged}
-          onClick={() => {
-            setAuthenticated(BM.examSucceeded(points));
-            setPhase('verdict');
-          }}>
-          {allJudged ? 'Submit Your Assessment' : 'Judge every point first'}
-        </button>
+        <div className="bm-money">
+          <div><span>True value</span><b>{money(offer.originalValue)}</b></div>
+          <div><span>You paid</span><b>{money(outcome.pricePaid)}</b></div>
+          {outcome.restorationFee > 0 && (
+            <div><span>Restoration owed</span>
+              <b>{money(outcome.restorationFee)}</b></div>
+          )}
+          {outcome.declareFee > 0 && (
+            <div><span>Declaration owed</span>
+              <b>{money(outcome.declareFee)}</b></div>
+          )}
+          <div><span>Worth to you</span>
+            <b>{money(outcome.effectiveValue)}</b></div>
+        </div>
+        {outcome.salvageOnly && (
+          <p className="empty-note" style={{ color: 'var(--rare-icon)' }}>
+            This piece cannot be exhibited. It will sit in your collection as
+            salvage — sell it from a gallery to recover what little it is worth.
+          </p>
+        )}
+        <div className="divider" />
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={() => { onBuy(offer.artifactId, outcome); onClose(); }}>
+            Take the Deal · {money(outcome.pricePaid)}
+          </button>
+          <button className="ghost" onClick={onClose}>Decline &amp; Leave</button>
+        </div>
       </div>
     );
   }
 
-  // --- verdict: authenticated or uncertain -------------------
-  // the player knows the truth if they authenticated, or paid to inspect
-  const truthKnown = authenticated || inspected;
+  // --- research ------------------------------------------------
+  const colourMark = (c: BM.FeedbackColour) =>
+    c === 'green' ? '🟩' : c === 'yellow' ? '🟨'
+      : c === 'red' ? '🟥' : '⬛';
+
   return (
     <div className="panel">
-      <h2>
-        {truthKnown
-          ? (offer.isReal ? 'A Genuine Work' : 'A Forgery')
-          : 'Inconclusive'}
-        <span className="sub">
-          {authenticated ? 'your examination held'
-            : inspected ? 'the expert has reported'
-            : 'your examination fell short'}
-        </span>
-      </h2>
+      <h2>Authenticate<span className="sub">{art.name}</span></h2>
+      <div className="bm-head">
+        <div><span>Claimed</span><b>{STYLES[offer.claimedStyle].name} {art.type}</b></div>
+        <div><span>Asking</span><b>{money(askPrice)}</b></div>
+        <div><span>Turns left</span><b>{turnsLeft}</b></div>
+        <div><span>Dealer patience</span>
+          <b>{'●'.repeat(patience)}{'○'.repeat(Math.max(0, offer.patience - patience))}</b></div>
+      </div>
 
-      {truthKnown ? (
-        <p className="empty-note">
-          {offer.isReal
-            ? `The piece is authentic — a true ${rarityForScore(art.score).name} `
-              + `${art.name}, offered at ${money(offer.askingPrice)}.`
-            : `The piece is a forgery. Buying it would be ${money(offer.askingPrice)} `
-              + `thrown away.`}
-        </p>
+      {dealerLine && <p className="bm-dealer">{dealerLine}</p>}
+
+      {/* evidence grid — actions as rows, 4 categories as columns */}
+      <div className="bm-grid">
+        <div className="bm-grid-head">
+          <span>Research</span>
+          {BM.CATEGORIES.map(c => (
+            <span key={c} title={BM.CATEGORY_LABEL[c]}>
+              {BM.CATEGORY_LABEL[c].split(' ')[0]}
+            </span>
+          ))}
+        </div>
+        {results.length === 0 && (
+          <div className="bm-grid-empty">
+            No research yet — run an action below.
+          </div>
+        )}
+        {results.map((r, i) => {
+          const def = BM.ACTIONS.find(a => a.id === r.actionId)!;
+          return (
+            <div className="bm-grid-row" key={i}>
+              <span className="bm-action-name">{def.label}</span>
+              {BM.CATEGORIES.map(c => (
+                <span key={c} className="bm-cell">{colourMark(r.colours[c])}</span>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* research actions */}
+      {canResearch ? (
+        <>
+          <div className="filter-group-label">Research actions</div>
+          <div className="bm-actions">
+            {BM.ACTIONS.map(a => (
+              <button key={a.id} className="bm-action-btn"
+                disabled={state.funds < a.cost}
+                title={a.blurb}
+                onClick={() => doAction(a.id)}>
+                {a.label}<span className="bm-action-cost">{money(a.cost)}</span>
+              </button>
+            ))}
+          </div>
+        </>
       ) : (
         <p className="empty-note">
-          Your examination was not thorough enough to be sure. You can buy it
-          blind and take your chances — or pay {money(fee)} for an expert
-          inspection to learn the truth first.
+          {patience <= 0
+            ? 'The dealer is out of patience — decide now.'
+            : 'No research turns left — make your decision.'}
         </p>
       )}
 
       <div className="divider" />
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <button
-          disabled={state.funds < offer.askingPrice}
-          onClick={() => {
-            onBuy(offer.artifactId, offer.askingPrice, offer.isReal,
-              truthKnown);
-            onClose();
-          }}>
-          {truthKnown ? 'Buy' : 'Buy Unverified'} · {money(offer.askingPrice)}
+
+      {/* the deduction */}
+      <div className="filter-group-label">Your verdict</div>
+      <p className="empty-note">
+        Name the single verdict the evidence points to. Guess right and the
+        deal resolves on fair terms; guess wrong and you buy blind.
+      </p>
+      <select className="bm-select" value={guess}
+        onChange={e => setGuess(e.target.value as BM.Verdict)}>
+        <option value="">— choose a verdict —</option>
+        {BM.VERDICTS.map(v => (
+          <option key={v.id} value={v.id}>{v.label}</option>
+        ))}
+      </select>
+
+      <div className="bm-decide">
+        <button disabled={!guess} onClick={() => resolveGuess(true)}>
+          Buy on This Verdict
         </button>
-        {!truthKnown && (
-          <button className="ghost"
-            disabled={state.funds < fee}
-            onClick={() => setInspected(true)}>
-            Pay {money(fee)} to Inspect
-          </button>
-        )}
-        <button className="ghost" onClick={onClose}>Walk Away</button>
+        <button className="ghost" onClick={negotiate}
+          disabled={patience <= 0}>
+          Negotiate Price
+        </button>
+        <button className="ghost" onClick={onClose}>Pass</button>
       </div>
     </div>
   );

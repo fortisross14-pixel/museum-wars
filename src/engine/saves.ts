@@ -30,8 +30,11 @@ function migrateState(state: Partial<GameState>): GameState {
   if (!s.shards || typeof s.shards !== 'object') s.shards = {};
   if (typeof s.galaPending !== 'boolean') s.galaPending = false;
   if (typeof s.blackMarketPending !== 'boolean') s.blackMarketPending = false;
-  if (!Array.isArray(s.unanalyzed)) s.unanalyzed = [];
-  if (!Array.isArray(s.forgeries)) s.forgeries = [];
+  if (!s.restorationOwed || typeof s.restorationOwed !== 'object')
+    s.restorationOwed = {};
+  if (!s.stolenUndeclared || typeof s.stolenUndeclared !== 'object')
+    s.stolenUndeclared = {};
+  if (!Array.isArray(s.salvageOnly)) s.salvageOnly = [];
   if (!Array.isArray(s.history)) s.history = [];
   if (!Array.isArray(s.joinedHouses)) s.joinedHouses = ['house1'];
   if (!Array.isArray(s.rivals)) s.rivals = [];

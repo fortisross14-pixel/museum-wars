@@ -20,6 +20,7 @@ import {
   rarityForScore,
 } from '../data/constants';
 import type { AuctionHouseDef } from '../data/constants';
+import type { PurchaseOutcome as BMPurchaseOutcome } from './blackmarket';
 import { ARTIFACTS, ARTIFACT_BY_ID } from '../data/artifacts';
 import { randInt, rand, money, uid, gaussian } from './util';
 
@@ -120,8 +121,9 @@ export function newGame(): GameState {
     shards: {},
     galaPending: false,
     blackMarketPending: false,
-    unanalyzed: [],
-    forgeries: [],
+    restorationOwed: {},
+    stolenUndeclared: {},
+    salvageOnly: [],
     phase: 'choose-specialty',
   };
 }
@@ -156,8 +158,9 @@ function fork(s: GameState): GameState {
     candidates: s.candidates.map(m => ({ ...m })),
     expeditions: s.expeditions.map(e => ({ ...e })),
     shards: { ...s.shards },
-    unanalyzed: (s.unanalyzed || []).map(u => ({ ...u })),
-    forgeries: [...(s.forgeries || [])],
+    restorationOwed: { ...(s.restorationOwed || {}) },
+    stolenUndeclared: { ...(s.stolenUndeclared || {}) },
+    salvageOnly: [...(s.salvageOnly || [])],
   };
 }
 
@@ -255,30 +258,23 @@ export function nameGallery(
 export function researchTier(s: GameState) {
   return RESEARCH_TIERS[s.specialties.length - 1] || null;
 }
-/** the research fee after a "thrifty" researcher's discount —
- *  up to 40% off, scaling with the thrifty researcher's skill. */
+/** the flat research fee, after a "thrifty" researcher's discount
+ *  (up to 40% off, scaling with the thrifty researcher's skill). */
 export function researchFee(s: GameState): number {
-  const tier = researchTier(s);
-  if (!tier) return 0;
   const thrifty = specialtySkill(s, 'thrifty');
   const discount = Math.min(0.4, thrifty * 0.14);
-  return Math.round(tier.fee * (1 - discount));
+  return Math.round(2000 * (1 - discount));
 }
 export function canResearch(s: GameState):
-  { ok: boolean; reason?: string; hostRoomId?: number } {
+  { ok: boolean; reason?: string } {
   if (s.research) return { ok: false, reason: 'Research already in progress.' };
   const tier = researchTier(s);
   if (!tier) return { ok: false, reason: 'All specialties unlocked.' };
   if (!hasRole(s, 'researcher'))
     return { ok: false, reason: 'You must employ a Researcher to research a new style.' };
-  if (activeMuseum(s).fame < tier.fameReq)
-    return { ok: false, reason: `Requires ${tier.fameReq} fame.` };
   if (s.funds < researchFee(s))
     return { ok: false, reason: `Requires a ${money(researchFee(s))} research fee.` };
-  const host = activeMuseum(s).rooms.find(r => r.unlocked && !r.theme && !r.researching);
-  if (!host)
-    return { ok: false, reason: 'Needs an open, unassigned room to host it.' };
-  return { ok: true, hostRoomId: host.id };
+  return { ok: true };
 }
 export function startResearch(s: GameState, style: StyleId): Result {
   const chk = canResearch(s);
@@ -291,11 +287,9 @@ export function startResearch(s: GameState, style: StyleId): Result {
   let next = fork(s);
   next.funds -= researchFee(s);
   next.research = { style, weeksLeft: weeks };
-  const rMus = activeMuseum(next);
-  rMus.rooms = rMus.rooms.map(r => r.id === chk.hostRoomId
-    ? { ...r, researching: { style, weeksLeft: weeks } } : r);
   next = logged(next, { kind: 'good',
-    text: `Began researching ${STYLES[style].name} (${weeks} weeks).` });
+    text: `Began researching ${STYLES[style].name} (${weeks} weeks). `
+      + 'Theme any open room to it once complete.' });
   return { state: next };
 }
 
@@ -665,6 +659,17 @@ export function finishLot(s: GameState): GameState {
 export function placeArtifact(s: GameState, roomId: number): Result {
   const art = s.pendingItemId ? ARTIFACT_BY_ID[s.pendingItemId] : null;
   if (!art) return { state: s, error: 'No artifact to place.' };
+  // forgeries are salvage-only — they can never hang on a wall
+  if (s.salvageOnly.includes(art.id))
+    return { state: s,
+      error: 'A forgery cannot be exhibited — it can only be sold.' };
+  // an altered work must be restored, a stolen work declared, first
+  if (s.restorationOwed[art.id])
+    return { state: s,
+      error: 'This work must be restored before it can be exhibited.' };
+  if (s.stolenUndeclared[art.id])
+    return { state: s,
+      error: 'This work must be declared before it can be exhibited.' };
   const room = activeMuseum(s).rooms.find(r => r.id === roomId);
   if (!room || !canPlace(room, art.style))
     return { state: s, error: 'That room cannot take this work.' };
@@ -1230,97 +1235,95 @@ export function placeLoan(
 }
 
 /* --- black market ------------------------------------------ */
-/** Buy a black-market offer.
- *  `isReal` — the hidden truth of the piece.
- *  `truthKnown` — did the player already learn the truth (via the
- *    authentication game or a paid inspection)?
- *  If the truth is known, the buy resolves at once. If bought
- *  blind, the piece enters the collection UNANALYSED — it looks
- *  like any work until analysed, and a forgery on display will be
- *  caught. A curator-authenticator analyses every buy for free. */
+/* --- black market: buying & resolving ---------------------- */
+/** Buy a black-market offer. The caller passes the resolved
+ *  PurchaseOutcome from the authentication game. A genuine work
+ *  joins the collection; an "altered" work joins but owes a
+ *  restoration fee before it may be exhibited; a "stolen" work
+ *  joins but owes a declaration fee; forgeries join as
+ *  SALVAGE-ONLY items that can never be exhibited, only sold. */
 export function buyBlackMarket(
-  s: GameState, artifactId: string, price: number,
-  isReal: boolean, truthKnown: boolean,
+  s: GameState, artifactId: string, outcome: BMPurchaseOutcome,
 ): Result {
   const art = ARTIFACT_BY_ID[artifactId];
   if (!art) return { state: s, error: 'Unknown work.' };
-  if (s.funds < price)
-    return { state: s, error: 'You cannot afford the asking price.' };
+  if (s.funds < outcome.pricePaid)
+    return { state: s, error: 'You cannot afford this piece.' };
   let next = fork(s);
-  next.funds -= price;
+  next.funds -= outcome.pricePaid;
+  if (!next.owned.includes(artifactId)) next.owned.push(artifactId);
 
-  // a curator-authenticator analyses any purchase for free
-  const autoAnalyses = hasSpecialty(s, 'authenticator');
-  const resolved = truthKnown || autoAnalyses;
+  if (outcome.salvageOnly) {
+    // a forgery — it enters as a salvage-only holding, never to
+    // hang on a wall; the player can only sell it on
+    next.salvageOnly = [...next.salvageOnly, artifactId];
+    next = logged(next, { kind: 'bad',
+      text: outcome.verdict === 'full_forgery'
+        ? `${art.name} proves an outright forgery — worthless, fit only `
+          + `to be quietly sold off.`
+        : `${art.name} proves part-forged — it cannot be exhibited, only `
+          + `salvaged for a fraction of what it seemed worth.` });
+    return { state: next };
+  }
 
-  if (resolved) {
-    // the truth is known now — resolve immediately
-    if (isReal && !next.owned.includes(artifactId)) {
-      next.owned.push(artifactId);
-      activeMuseum(next).fame += Math.max(1, Math.round(art.score * 0.25));
-      next.expertise[art.style] = Math.min(5,
-        +(((next.expertise[art.style] || 0) + 0.2 + art.score / 500)).toFixed(2));
-      next = logged(next, { kind: 'good',
-        text: autoAnalyses && !truthKnown
-          ? `Your authenticator confirms ${art.name} is genuine — it joins `
-            + `the collection for ${money(price)}.`
-          : `The black-market piece was genuine — ${art.name} joins the `
-            + `collection for ${money(price)}.` });
-    } else {
-      next = logged(next, { kind: 'bad',
-        text: autoAnalyses && !truthKnown
-          ? `Your authenticator exposes the piece as a forgery — `
-            + `${money(price)} lost, but no fake entered the museum.`
-          : `The black-market piece was a forgery. ${money(price)} lost.` });
-    }
-  } else {
-    // bought blind — the piece enters the collection UNANALYSED.
-    if (!next.owned.includes(artifactId)) next.owned.push(artifactId);
-    next.unanalyzed = [...next.unanalyzed,
-      { artifactId, pricePaid: price }];
-    if (!isReal) next.forgeries = [...next.forgeries, artifactId];
+  // a genuine / altered / misattributed / stolen work — it joins
+  // the collection and earns the usual acquisition fame
+  activeMuseum(next).fame += Math.max(1, Math.round(art.score * 0.2));
+  next.expertise[art.style] = Math.min(5,
+    +(((next.expertise[art.style] || 0) + 0.2 + art.score / 500)).toFixed(2));
+
+  if (outcome.restorationFee > 0) {
+    next.restorationOwed = { ...next.restorationOwed,
+      [artifactId]: outcome.restorationFee };
     next = logged(next, { kind: 'note',
-      text: `${art.name} is bought unverified for ${money(price)}. Have it `
-        + `analysed before you dare display it.` });
+      text: `${art.name} joins the collection, but is altered — pay its `
+        + `${money(outcome.restorationFee)} restoration before exhibiting it.` });
+  } else if (outcome.declareFee > 0) {
+    next.stolenUndeclared = { ...next.stolenUndeclared,
+      [artifactId]: outcome.declareFee };
+    next = logged(next, { kind: 'note',
+      text: `${art.name} is genuine — but stolen. Declare it `
+        + `(${money(outcome.declareFee)}) to keep it lawfully.` });
+  } else {
+    next = logged(next, { kind: 'good',
+      text: `${art.name} joins the collection for ${money(outcome.pricePaid)}.` });
   }
   return { state: next };
 }
 
-/** the fee to analyse an unanalysed piece in the collection */
-export function analysisFee(artifactId: string): number {
-  return Math.max(2000, Math.round(ARTIFACT_BY_ID[artifactId].value * 0.15));
+/** Pay the restoration fee owed on an "altered" black-market
+ *  work, clearing it for exhibition. */
+export function payRestoration(s: GameState, artifactId: string): Result {
+  const owed = s.restorationOwed[artifactId];
+  if (!owed) return { state: s, error: 'No restoration is owed on that work.' };
+  if (s.funds < owed)
+    return { state: s, error: `Restoration costs ${money(owed)}.` };
+  let next = fork(s);
+  next.funds -= owed;
+  const ro = { ...next.restorationOwed };
+  delete ro[artifactId];
+  next.restorationOwed = ro;
+  next = logged(next, { kind: 'good',
+    text: `${ARTIFACT_BY_ID[artifactId].name} is restored — it may now be `
+      + `exhibited.` });
+  return { state: next };
 }
 
-/** Pay to analyse an unanalysed piece. A genuine work is cleared
- *  for display; a forgery is exposed and discarded (it never
- *  belonged in the collection). */
-export function analyzeArtifact(s: GameState, artifactId: string): Result {
-  if (!s.unanalyzed.some(u => u.artifactId === artifactId))
-    return { state: s, error: 'That work does not need analysis.' };
-  const art = ARTIFACT_BY_ID[artifactId];
-  const fee = analysisFee(artifactId);
-  if (s.funds < fee)
-    return { state: s, error: `Analysis costs ${money(fee)}.` };
+/** Declare a stolen black-market work to the authorities, paying
+ *  the declaration fee to keep it lawfully. */
+export function declareStolen(s: GameState, artifactId: string): Result {
+  const owed = s.stolenUndeclared[artifactId];
+  if (!owed) return { state: s, error: 'That work is not flagged stolen.' };
+  if (s.funds < owed)
+    return { state: s, error: `Declaring it costs ${money(owed)}.` };
   let next = fork(s);
-  next.funds -= fee;
-  next.unanalyzed = next.unanalyzed.filter(u => u.artifactId !== artifactId);
-  if (next.forgeries.includes(artifactId)) {
-    // exposed as a fake — remove it from the collection and walls
-    next.forgeries = next.forgeries.filter(id => id !== artifactId);
-    next.owned = next.owned.filter(id => id !== artifactId);
-    for (const m of next.museums) {
-      m.rooms = m.rooms.map(r =>
-        r.items.includes(artifactId)
-          ? { ...r, items: r.items.filter(id => id !== artifactId) } : r);
-    }
-    next = logged(next, { kind: 'bad',
-      text: `Analysis exposes ${art.name} as a forgery. It has been `
-        + `quietly removed from the collection.` });
-  } else {
-    next = logged(next, { kind: 'good',
-      text: `Analysis confirms ${art.name} is genuine — it may now be `
-        + `displayed without risk.` });
-  }
+  next.funds -= owed;
+  const su = { ...next.stolenUndeclared };
+  delete su[artifactId];
+  next.stolenUndeclared = su;
+  next = logged(next, { kind: 'good',
+    text: `${ARTIFACT_BY_ID[artifactId].name} is declared and lawfully `
+      + `yours — it may now be exhibited.` });
   return { state: next };
 }
 
@@ -1481,27 +1484,19 @@ export function playerVisitorsEstimate(s: GameState): number {
 export function advanceWeek(s: GameState): GameState {
   let next = fork(s);
 
-  // research progress
+  // research progress — a global timer; no room hosts it
   if (next.research) {
     const left = next.research.weeksLeft - 1;
     if (left <= 0) {
       const sp = next.research.style;
       next.specialties.push(sp);
       next.expertise[sp] = Math.max(next.expertise[sp] || 0, 0.5);
-      for (const m of next.museums) {
-        m.rooms = m.rooms.map(r =>
-          r.researching && r.researching.style === sp
-            ? { ...r, researching: null, theme: sp } : r);
-      }
       next.research = null;
       next = logged(next, { kind: 'good',
-        text: `Research complete — ${STYLES[sp].name} is now a specialty.` });
+        text: `Research complete — ${STYLES[sp].name} is now a specialty. `
+          + 'Theme any open room to it.' });
     } else {
       next.research = { ...next.research, weeksLeft: left };
-      for (const m of next.museums) {
-        m.rooms = m.rooms.map(r => r.researching
-          ? { ...r, researching: { ...r.researching, weeksLeft: left } } : r);
-      }
     }
   }
 
@@ -1567,33 +1562,6 @@ export function advanceWeek(s: GameState): GameState {
       .filter(l => l.weeksLeft > 0);
   }
 
-  // a museum inspection may catch an unanalysed FORGERY on display.
-  // Displaying an unverified piece is a gamble: if it is fake and
-  // hangs on a wall, an inspection fines you 3x the price paid and
-  // strips 15% of your fame. Analysed pieces are never at risk.
-  for (const fake of [...next.unanalyzed]) {
-    if (!next.forgeries.includes(fake.artifactId)) continue;
-    const host = next.museums.find(m =>
-      m.rooms.some(r => r.items.includes(fake.artifactId)));
-    if (!host) continue;   // not on display anywhere — safe
-    const art = ARTIFACT_BY_ID[fake.artifactId];
-    const fine = fake.pricePaid * 3;
-    const fameLost = Math.round(host.fame * 0.15);
-    next.funds -= fine;
-    host.fame = Math.max(0, host.fame - fameLost);
-    // the fake is removed; its records cleared
-    next.unanalyzed = next.unanalyzed.filter(u => u.artifactId !== fake.artifactId);
-    next.forgeries = next.forgeries.filter(id => id !== fake.artifactId);
-    next.owned = next.owned.filter(id => id !== fake.artifactId);
-    host.rooms = host.rooms.map(r =>
-      r.items.includes(fake.artifactId)
-        ? { ...r, items: r.items.filter(id => id !== fake.artifactId) } : r);
-    next = logged(next, { kind: 'bad',
-      text: `An inspection exposed ${art.name} on display as a forgery. `
-        + `Fined ${money(fine)} and ${fameLost} fame lost — a public `
-        + `humiliation.` });
-  }
-
   // economy: revenue in, expenses out — both recorded for display
   const revenue = totalRevenue(next);
   const expenses = computeExpenses(next);
@@ -1614,18 +1582,39 @@ export function advanceWeek(s: GameState): GameState {
     next.candidates = makeCandidates();
   }
 
-  // the three rival players grow each week
+  // the three rival cousins grow each week, each with a distinct
+  // temperament so the race feels alive but never hopeless:
+  //  - rival 0  "the rival": paces YOU — pulls ahead when you do
+  //             well, eases when you are behind. A true race.
+  //  - rival 1  "the slow one": a gentle, steady climb.
+  //  - rival 2  "the fast starter": climbs quickly early but
+  //             decelerates hard and effectively caps — they will
+  //             be second or third in the city, never the Louvre.
   const playerFame = totalFame(next);
-  next.rivals = next.rivals.map(r => {
-    const lead = r.fame - playerFame;
-    const fg = lead > 50 ? randInt(0, 2)
-      : lead > 0 ? randInt(2, 5)
-      : randInt(3, 7);
+  next.rivals = next.rivals.map((r, i) => {
+    let fg: number;
+    if (i === 0) {
+      // relative to the player: matches your pace, ahead/behind nudge
+      const lead = r.fame - playerFame;
+      fg = lead > 30 ? randInt(0, 1)
+        : lead > 0 ? randInt(1, 3)
+        : randInt(2, 4);
+    } else if (i === 1) {
+      // the slow, steady cousin
+      fg = randInt(1, 2);
+    } else {
+      // the fast starter — growth decays as their fame rises and
+      // is choked off near a soft cap (~140 fame: a strong second
+      // or third in the city, not a world museum)
+      const cap = 140;
+      const room = Math.max(0, cap - r.fame) / cap;   // 1 -> 0
+      fg = Math.round(randInt(2, 7) * room);
+    }
     return {
       ...r,
       fame: r.fame + fg,
-      quality: r.quality + randInt(3, 9),
-      visitors: Math.max(0, r.visitors + randInt(-40, 120)),
+      quality: r.quality + randInt(2, 6),
+      visitors: Math.max(0, r.visitors + randInt(-40, 110)),
     };
   });
 
