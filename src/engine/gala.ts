@@ -38,6 +38,7 @@ export interface Conversation {
   options: ConverseLine[];    // the lines offered this round
   lastDelta: number;          // trust change from the last choice
   lastText: string;           // the guest's reaction line
+  usedLines: string[];        // dialogue already offered this talk
   finished: boolean;
 }
 
@@ -96,37 +97,48 @@ export function makeGuests(playerStyles: StyleId[]): Guest[] {
 
 /** deal a fresh round of dialogue options — a shuffled handful
  *  spanning several tags so the player always has a real choice. */
-function dealOptions(): ConverseLine[] {
-  const byTag = new Map<string, ConverseLine[]>();
-  for (const line of CONVERSE_LINES) {
-    const arr = byTag.get(line.tag) || [];
-    arr.push(line);
-    byTag.set(line.tag, arr);
-  }
-  const tags = [...byTag.keys()];
-  // shuffle tags, take 4, one line from each
-  for (let i = tags.length - 1; i > 0; i--) {
+function dealOptions(used: Set<string>): ConverseLine[] {
+  // candidate lines not yet used this conversation
+  let pool = CONVERSE_LINES.filter(l => !used.has(l.text));
+  // if the bank is exhausted, allow reuse rather than deal nothing
+  if (pool.length < 3) pool = CONVERSE_LINES.slice();
+  // shuffle the pool
+  const shuffled = pool.slice();
+  for (let i = shuffled.length - 1; i > 0; i--) {
     const j = randInt(0, i);
-    [tags[i], tags[j]] = [tags[j], tags[i]];
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
-  return tags.slice(0, 4).map(t => {
-    const arr = byTag.get(t)!;
-    return arr[randInt(0, arr.length - 1)];
-  });
+  // take 3, each a distinct tag and a distinct line
+  const out: ConverseLine[] = [];
+  const tagsUsed = new Set<string>();
+  for (const line of shuffled) {
+    if (tagsUsed.has(line.tag)) continue;
+    out.push(line);
+    tagsUsed.add(line.tag);
+    if (out.length === 3) break;
+  }
+  // if too few distinct tags remained, top up ignoring the tag rule
+  for (const line of shuffled) {
+    if (out.length === 3) break;
+    if (!out.includes(line)) out.push(line);
+  }
+  return out;
 }
 
 /** Begin a conversation with a guest, pursuing a chosen work. */
 export function startConversation(guest: Guest, targetId: string):
   Conversation {
   const score = ARTIFACTS.find(a => a.id === targetId)?.score || 0;
+  const first = dealOptions(new Set());
   return {
     guest, targetId,
     trust: 3,                         // a polite baseline
     round: 0,
     totalRounds: roundsForScore(score),
-    options: dealOptions(),
+    options: first,
     lastDelta: 0,
     lastText: `${guest.name} regards you with mild interest.`,
+    usedLines: first.map(l => l.text),
     finished: false,
   };
 }
@@ -154,12 +166,16 @@ export function chooseLine(c: Conversation, line: ConverseLine):
   const trust = Math.max(0, c.trust + delta);
   const round = c.round + 1;
   const finished = round >= c.totalRounds;
+  const used = new Set(c.usedLines);
+  const nextOptions = finished ? [] : dealOptions(used);
+  for (const o of nextOptions) used.add(o.text);
   return {
     ...c,
     trust, round,
     lastDelta: delta,
     lastText: reaction,
-    options: finished ? [] : dealOptions(),
+    options: nextOptions,
+    usedLines: [...used],
     finished,
   };
 }

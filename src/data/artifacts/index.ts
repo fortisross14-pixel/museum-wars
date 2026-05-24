@@ -8,7 +8,8 @@
    Sources, in id order:
      pass1.ts       ids 0001-0210  — 10 core icons + 200 real works
      pass2.ts       ids 0211-0410  — 200 real works
-     procedural.ts  ids 0411+      — generated Common-tier filler
+     pass3.ts       ids 0411-0610  — 200 real / inspired-by-real works
+     procedural.ts  ids 0611+      — generated Common-tier filler
 
    TO ADD A NEW HAND-AUTHORED BATCH:
      1. drop e.g. pass3.ts into this folder (exports an Artifact[])
@@ -18,17 +19,19 @@
 import type { Artifact } from '../types';
 import { ARTIFACTS_PASS1 } from './pass1';
 import { ARTIFACTS_PASS2 } from './pass2';
+import { ARTIFACTS_PASS3 } from './pass3';
 import { generateCommonArtifacts } from './procedural';
 
 /** how many procedural Common-tier artifacts to generate */
 export const PROCEDURAL_COUNT = 300;
 /** first id for the procedural block — must sit after the last
- *  hand-authored id (currently 0410). */
-export const PROCEDURAL_START_ID = 411;
+ *  hand-authored id (currently 0610). */
+export const PROCEDURAL_START_ID = 611;
 
 const HANDCRAFTED: Artifact[] = [
   ...ARTIFACTS_PASS1,
   ...ARTIFACTS_PASS2,
+  ...ARTIFACTS_PASS3,
 ];
 
 const PROCEDURAL: Artifact[] = generateCommonArtifacts(

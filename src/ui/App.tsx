@@ -743,17 +743,27 @@ function GalleriesTab({
   if (state.pendingItemId && !unplaced.includes(state.pendingItemId))
     unplaced.unshift(state.pendingItemId);
 
-  const placeInto = (artId: string, roomId: number) => {
-    const art = ARTIFACT_BY_ID[artId];
+  const placeInto = (dragId: string, roomId: number) => {
+    // a loan is dragged as "loan:<loanId>"; owned art as the bare id
+    if (dragId.startsWith('loan:')) {
+      const loanId = dragId.slice(5);
+      const r = E.placeLoan(state, loanId, roomId);
+      if (r.error) flash(r.error); else apply(r);
+      setHeldArt(null);
+      return;
+    }
+    const art = ARTIFACT_BY_ID[dragId];
     const room = museum.rooms.find(r => r.id === roomId)!;
     if (!E.canPlace(room, art.style)) {
       flash(E.roomIsFull(room) ? 'That room is full.'
         : 'That room is themed to a different style.');
       return;
     }
-    apply(E.placeArtifact({ ...state, pendingItemId: artId }, roomId));
+    apply(E.placeArtifact({ ...state, pendingItemId: dragId }, roomId));
     setHeldArt(null);
   };
+  // loans of the active museum not yet on display
+  const pendingLoans = museum.loans.filter(l => l.roomId === null);
 
   const halls: Record<string, { name: string; rooms: Room[] }> = {};
   for (const r of museum.rooms)
@@ -951,6 +961,60 @@ function GalleriesTab({
         )}
       </div>
 
+      {/* loaned works — exhibit them like the private collection */}
+      {museum.loans.length > 0 && (
+        <div className="drawer">
+          <h3>Loaned Items</h3>
+          {pendingLoans.length === 0 ? (
+            <p className="empty-note">
+              Every loaned work is on display. A loan leaves when its term
+              ends — you cannot hang it again once returned.
+            </p>
+          ) : (
+            <>
+              <div className="drag-hint">
+                {pendingLoans.length} loaned work(s) waiting. Drag one onto a
+                matching wall to exhibit it — a loan can be placed only once.
+              </div>
+              <div className="coll-strip">
+                {pendingLoans.map(loan => {
+                  const art = ARTIFACT_BY_ID[loan.artifactId];
+                  const band = rarityForScore(art.score);
+                  const ini = art.name.split(/\s+/)
+                    .filter(w => /[A-Za-z]/.test(w))
+                    .slice(0, 2).map(w => w[0].toUpperCase()).join('');
+                  return (
+                    <div key={loan.id} className="acq on-loan-card"
+                      draggable
+                      onDragStart={e => {
+                        e.dataTransfer.setData('text/plain', 'loan:' + loan.id);
+                        setHeldArt('loan:' + loan.id);
+                      }}>
+                      <div className="acq-img" style={{ background: band.hex }}>
+                        {ini}
+                      </div>
+                      <div className="acq-body">
+                        <div className="acq-name">{art.name}</div>
+                        <div className="acq-sub">
+                          {art.type} · {STYLES[art.style].name}
+                        </div>
+                        <div className="acq-foot">
+                          <span className={'pill ' + band.cls}>{band.name}</span>
+                          <span className="acq-meta">{loan.weeksLeft} wk left</span>
+                        </div>
+                        <div className="acq-loan-note">
+                          On loan from {loan.lenderName} · {money(loan.weeklyFee)}/wk
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {sellArt && (
         <SellDialog
           artifact={ARTIFACT_BY_ID[sellArt]}
@@ -1084,8 +1148,14 @@ function GalleryRoom({
     );
   }
 
+  // owned works first, then any loans exhibited in this room
+  const loanIdsHere = E.activeMuseum(state).loans
+    .filter(l => l.roomId === room.id)
+    .map(l => l.artifactId);
+  const filled = [...room.items, ...loanIdsHere];
   const slots: (string | null)[] = [];
-  for (let i = 0; i < 5; i++) slots.push(room.items[i] || null);
+  for (let i = 0; i < 5; i++) slots.push(filled[i] || null);
+  const loanSet = new Set(loanIdsHere);
 
   return (
     <div
@@ -1103,7 +1173,7 @@ function GalleryRoom({
         style={{ ['--plaque' as string]: '#2c2f24' }}
         onClick={onSelect}>
         <div className="pname">{STYLES[theme].name}</div>
-        <div className="psub">{room.items.length}/5 · room</div>
+        <div className="psub">{filled.length}/5 · room</div>
       </div>
       <div className="groom-slots">
         {slots.map((artId, i) => {
@@ -1118,19 +1188,24 @@ function GalleryRoom({
           }
           const art = ARTIFACT_BY_ID[artId];
           const band = rarityForScore(art.score);
+          const isLoan = loanSet.has(artId);
           const initials = art.name.split(/\s+/)
             .filter(w => /[A-Za-z]/.test(w))
             .slice(0, 2).map(w => w[0].toUpperCase()).join('');
           return (
-            <div key={i} className="slot filled"
+            <div key={i} className={'slot filled' + (isLoan ? ' on-loan' : '')}
               style={{ ['--rar' as string]: band.hex }}
-              title={`${art.name} — ${band.name} (score ${art.score})`}
+              title={`${art.name} — ${band.name} (score ${art.score})`
+                + (isLoan ? ' · on loan' : '')}
               onClick={() => onSlotClick(artId)}>
-              <button className="slot-remove"
-                title="Move to private collection"
-                onClick={e => { e.stopPropagation(); onRemoveArt(artId); }}>
-                ×
-              </button>
+              {!isLoan && (
+                <button className="slot-remove"
+                  title="Move to private collection"
+                  onClick={e => { e.stopPropagation(); onRemoveArt(artId); }}>
+                  ×
+                </button>
+              )}
+              {isLoan && <span className="slot-loan-tag">loan</span>}
               <span className="slot-icon">{typeIcon(art.type)}</span>
               <span className="slot-initials">{initials}</span>
             </div>
@@ -1790,9 +1865,10 @@ function ExpeditionGame({
   const collect = () => {
     const res = Dig.boardResult(board);
     if (def.yieldsObjects) {
-      // roll that many real works of the right band+style
+      // roll that many real works of the right band+style — never a
+      // work the player already owns, or resolveExpedition drops it
       const ids: string[] = [];
-      const owned = new Set<string>();
+      const owned = new Set<string>(state.owned);
       const band = def.id === 'common' ? 'common' : 'uncommon';
       for (let i = 0; i < res.artifacts; i++) {
         const pool = ARTIFACTS.filter(a =>

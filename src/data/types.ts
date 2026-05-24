@@ -208,7 +208,7 @@ export type ShardBank = Record<string, number>;
 export interface Loan {
   id: string;
   artifactId: string;
-  roomId: number;          // the wall it hangs on
+  roomId: number | null;   // the wall it hangs on, or null if not yet exhibited
   weeksLeft: number;       // counts down; 0 = the loan ends
   weeklyFee: number;       // paid each week the loan runs
   lenderName: string;      // the collector it came from

@@ -836,11 +836,12 @@ export function courtSponsor(
     termWeeks: term, weeksLeft: term, weeklyPay: pay,
   };
   mus.sponsors = [...mus.sponsors, sponsor];
-  // the sponsor names the space
+  // the sponsor names the space, with a scope suffix —
+  // "Granby Industries Gallery", "The Hallowell Foundation Wing"
   if (scope === 'wing' && hallId) {
-    mus.wingNames = { ...mus.wingNames, [hallId]: firmName };
+    mus.wingNames = { ...mus.wingNames, [hallId]: `${firmName} Wing` };
   } else if (scope === 'building') {
-    mus.name = firmName;
+    mus.name = `${firmName} Gallery`;
   }
   next = logged(next, { kind: 'good',
     text: `${firmName} will sponsor ${scope === 'building'
@@ -1187,25 +1188,44 @@ export function acceptLoan(
 ): Result {
   const art = ARTIFACT_BY_ID[artifactId];
   if (!art) return { state: s, error: 'Unknown work.' };
-  // a wall of the right style with a free slot (counting loans too)
-  const room = activeMuseum(s).rooms.find(r => {
-    if (!roomReady(r) || r.theme !== art.style) return false;
-    const used = r.items.length + loanedIdsInRoom(s, r.id).length;
-    return used < ROOM_CAPACITY;
-  });
-  if (!room)
-    return { state: s,
-      error: `Needs an open ${STYLES[art.style].name} wall to hang it.` };
+  // the loan enters the active museum immediately, unplaced — the
+  // player exhibits it from the Loaned Items block when ready.
   let next = fork(s);
   const lMus = activeMuseum(next);
   lMus.loans = [...lMus.loans, {
     id: uid('loan'),
-    artifactId, roomId: room.id,
+    artifactId, roomId: null,
     weeksLeft: weeks, weeklyFee, lenderName,
   }];
   next = logged(next, { kind: 'good',
     text: `${lenderName} loans ${art.name} for ${weeks} weeks `
-      + `(${money(weeklyFee)}/week).` });
+      + `(${money(weeklyFee)}/week) — exhibit it from your galleries.` });
+  return { state: next };
+}
+
+/** Exhibit a loaned work on a wall. The wall must match the work's
+ *  style and have a free slot. A loan can be placed only once. */
+export function placeLoan(
+  s: GameState, loanId: string, roomId: number,
+): Result {
+  const mus0 = activeMuseum(s);
+  const loan = mus0.loans.find(l => l.id === loanId);
+  if (!loan) return { state: s, error: 'No such loan.' };
+  if (loan.roomId !== null)
+    return { state: s, error: 'That loan is already on display.' };
+  const art = ARTIFACT_BY_ID[loan.artifactId];
+  const room = mus0.rooms.find(r => r.id === roomId);
+  if (!room || !roomReady(room) || room.theme !== art.style)
+    return { state: s, error: 'That wall cannot take this work.' };
+  const used = room.items.length + loanedIdsInRoom(s, room.id).length;
+  if (used >= ROOM_CAPACITY)
+    return { state: s, error: 'That room is full.' };
+  let next = fork(s);
+  const m = activeMuseum(next);
+  m.loans = m.loans.map(l =>
+    l.id === loanId ? { ...l, roomId } : l);
+  next = logged(next, { kind: 'note',
+    text: `${art.name} (on loan) is now on display.` });
   return { state: next };
 }
 
@@ -1372,8 +1392,9 @@ export function dailyVisitors(s: GameState, museum?: Museum): number {
   const draws: number[] = [];
   for (const r of mus.rooms)
     for (const id of r.items) draws.push(artifactDailyDraw(id));
-  // works on loan hang on the walls and draw visitors too
-  for (const l of mus.loans) draws.push(artifactDailyDraw(l.artifactId));
+  // works on loan that are ON DISPLAY draw visitors too
+  for (const l of mus.loans)
+    if (l.roomId !== null) draws.push(artifactDailyDraw(l.artifactId));
   if (draws.length === 0) return 0;
 
   // best pieces count fullest; each next piece is worth a little
@@ -1505,7 +1526,7 @@ export function advanceWeek(s: GameState): GameState {
     for (const sp of ending) {
       // the named space reverts when the sponsor departs
       if (sp.scope === 'wing' && sp.hallId
-          && m.wingNames[sp.hallId] === sp.name) {
+          && m.wingNames[sp.hallId] === `${sp.name} Wing`) {
         const wn = { ...m.wingNames };
         delete wn[sp.hallId];
         m.wingNames = wn;
